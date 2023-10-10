@@ -6,7 +6,6 @@ use voku\helper\HtmlDomParser;
 
 class FieldDescription
 {
-
     private HtmlDomParser $dom;
 
     public function __construct(string $description)
@@ -24,7 +23,7 @@ class FieldDescription
 
     public function getDefaultValue(): mixed
     {
-        $description = (string)$this;
+        $description = (string) $this;
         if (stripos($description, 'must be') !== false) {
             $text = explode('must be ', $this->dom->html())[1] ?? '';
             if (!empty($text)) {
@@ -36,32 +35,39 @@ class FieldDescription
                 }
             }
         }
+
         $offset = stripos($description, 'defaults to');
         if ($offset === false) {
             return null;
         }
+
         $description = substr($description, $offset + 12);
         $parts = explode(' ', $description, 2);
         $value = $parts[0];
         if (str_ends_with($value, '.') or str_ends_with($value, ',')) {
             $value = substr($value, 0, -1);
         }
+
         if (str_starts_with($value, '“') and str_ends_with($value, '”')) {
             return str_replace(['“', '”'], ['', ''], $value);
         }
+
         if (is_numeric($value)) {
-            return (int)$value;
+            return (int) $value;
         }
+
         if (strtolower($value) == 'true') {
             return true;
         }
+
         if (strtolower($value) == 'false') {
             return false;
         }
+
         if ($value === ucfirst($value)) {
             return $value;
         }
+
         return null;
     }
-
 }

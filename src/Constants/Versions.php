@@ -102,7 +102,7 @@ class Versions
         self::V660 => 'https://web.archive.org/web/20230314174834id_/https://core.telegram.org/bots/api',
         self::V670 => 'https://web.archive.org/web/20230422225636id_/https://core.telegram.org/bots/api',
         self::V680 => 'https://web.archive.org/web/20230823081042id_/https://core.telegram.org/bots/api',
-        self::LATEST => 'https://core.telegram.org/bots/api'
+        self::LATEST => 'https://core.telegram.org/bots/api',
     ];
 
     public static function getVersionFromText(string $text): string
@@ -112,12 +112,14 @@ class Versions
         if (defined($const)) {
             return constant($const);
         }
+
         return self::LATEST;
     }
 
     public static function getUrlFromText(string $text): string
     {
         $version = self::getVersionFromText($text);
+
         return self::URLS[$version] ?? self::URLS[self::LATEST];
     }
 }

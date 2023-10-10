@@ -4,8 +4,6 @@ namespace TgScraper\Common;
 
 class OpenApiGenerator
 {
-
-
     public function __construct(private array $defaultResponses, private array $data, array $types, array $methods)
     {
         $this->addTypes($types);
@@ -15,6 +13,7 @@ class OpenApiGenerator
     public function setVersion($version = '1.0.0'): self
     {
         $this->data['info']['version'] = $version;
+
         return $this;
     }
 
@@ -23,6 +22,7 @@ class OpenApiGenerator
         foreach ($methods as $method) {
             $this->addMethod($method['name'], $method['description'], $method['fields'], $method['return_types']);
         }
+
         return $this;
     }
 
@@ -36,15 +36,16 @@ class OpenApiGenerator
         if (!empty($fields['required'])) {
             $path['requestBody']['required'] = true;
         }
+
         $path['requestBody']['content'] = [
             'application/json' => $content,
             'application/x-www-form-urlencoded' => $content,
-            'multipart/form-data' => $content
+            'multipart/form-data' => $content,
         ];
         $path['responses'] = $this->defaultResponses;
-        $path['responses']['200']['content']['application/json']['schema']
-        ['allOf'][1]['properties']['result'] = self::parsePropertyTypes($returnTypes);
+        $path['responses']['200']['content']['application/json']['schema']['allOf'][1]['properties']['result'] = self::parsePropertyTypes($returnTypes);
         $this->data['paths'][$method]['post'] = $path;
+
         return $this;
     }
 
@@ -53,6 +54,7 @@ class OpenApiGenerator
         foreach ($types as $type) {
             $this->addType($type['name'], $type['description'], $type['fields'], $type['extended_by']);
         }
+
         return $this;
     }
 
@@ -65,9 +67,12 @@ class OpenApiGenerator
             foreach ($extendedBy as $extendedType) {
                 $this->data['components']['schemas'][$name]['anyOf'][] = self::parsePropertyType($extendedType);
             }
+
             return $this;
         }
+
         $this->data['components']['schemas'][$name]['type'] = 'object';
+
         return $this;
     }
 
@@ -79,11 +84,13 @@ class OpenApiGenerator
             if ($required) {
                 $schema['required'][] = $name;
             }
+
             $schema['properties'][$name] = self::parsePropertyTypes($field['types']);
             if (!empty($field['default'] ?? null)) {
                 $schema['properties'][$name]['default'] = $field['default'];
             }
         }
+
         return $schema;
     }
 
@@ -97,8 +104,10 @@ class OpenApiGenerator
                 $result['anyOf'][] = $type;
                 continue;
             }
+
             $result = $type;
         }
+
         return $result;
     }
 
@@ -107,10 +116,13 @@ class OpenApiGenerator
         if (str_starts_with($type, 'Array')) {
             return self::parsePropertyArray($type);
         }
+
         if (lcfirst($type) == $type) {
             $type = str_replace(['int', 'float', 'bool'], ['integer', 'number', 'boolean'], $type);
+
             return ['type' => $type];
         }
+
         return ['$ref' => '#/components/schemas/' . $type];
     }
 
@@ -119,15 +131,13 @@ class OpenApiGenerator
         if (preg_match('/Array<(.+)>/', $type, $matches) === 1) {
             return [
                 'type' => 'array',
-                'items' => self::parsePropertyTypes(explode('|', $matches[1]))
+                'items' => self::parsePropertyTypes(explode('|', $matches[1])),
             ];
         }
+
         return [];
     }
 
-    /**
-     * @return array
-     */
     public function getData(): array
     {
         return $this->data;

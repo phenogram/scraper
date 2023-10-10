@@ -16,7 +16,9 @@
   "require-dev": {
     "phpunit/phpunit": "^9.5",
     "phpstan/phpstan": "^1.2",
-    "vimeo/psalm": "^4.15"
+    "vimeo/psalm": "^4.15",
+    "friendsofphp/php-cs-fixer": "^3.34",
+    "erickskrauch/php-cs-fixer-custom-fixers": "^1.2"
   },
   "suggest": {
     "sysbot/tgscraper-cache": "To speed up schema fetching and generation."
@@ -44,5 +46,10 @@
   ],
   "support": {
     "issues": "https://github.com/Sysbot-org/tgscraper/issues"
+  },
+  "scripts": {
+    "fix": [
+      "PHP_CS_FIXER_IGNORE_ENV=1 ./vendor/bin/php-cs-fixer fix -vvv --config=.php-cs-fixer.php --allow-risky=yes"
+    ]
   }
 }

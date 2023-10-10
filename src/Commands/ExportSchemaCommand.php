@@ -1,10 +1,7 @@
 <?php
 
-
 namespace TgScraper\Commands;
 
-
-use Exception;
 use Symfony\Component\Console\Command\Command;
 use Symfony\Component\Console\Input\InputArgument;
 use Symfony\Component\Console\Input\InputInterface;
@@ -14,11 +11,9 @@ use Symfony\Component\Console\Output\OutputInterface;
 use TgScraper\Common\Encoder;
 use TgScraper\Constants\Versions;
 use TgScraper\TgScraper;
-use Throwable;
 
 class ExportSchemaCommand extends Command
 {
-
     use Common;
 
     protected static $defaultName = 'app:export-schema';
@@ -72,21 +67,25 @@ class ExportSchemaCommand extends Command
         if ($input->getOption('prefer-stable')) {
             $version = Versions::STABLE;
         }
+
         $logger->info('Using version: ' . $version);
         try {
             $output->writeln('Fetching data for version...');
             $generator = TgScraper::fromVersion($logger, $version);
-        } catch (Throwable $e) {
-            $logger->critical((string)$e);
+        } catch (\Throwable $e) {
+            $logger->critical((string) $e);
+
             return Command::FAILURE;
         }
+
         $output->writeln('Exporting schema from data...');
         $destination = $input->getArgument('destination');
         try {
             TgScraper::getTargetDirectory(pathinfo($destination)['dirname']);
-        } catch (Exception) {
+        } catch (\Exception) {
             return Command::FAILURE;
         }
+
         $readable = $input->getOption('readable');
         $options = $input->getOption('options');
         $useYaml = $input->getOption('yaml');
@@ -98,17 +97,21 @@ class ExportSchemaCommand extends Command
             if ($useYaml) {
                 return $this->saveFile($logger, $output, $destination, Encoder::toYaml($data, $inline, $indent, $options), log: false);
             }
+
             return $this->saveFile($logger, $output, $destination, Encoder::toJson($data, $options | JSON_UNESCAPED_SLASHES, $readable), log: false);
         }
+
         if ($input->getOption('postman')) {
             $data = $generator->toPostman();
+
             return $this->saveFile($logger, $output, $destination, Encoder::toJson($data, $options, $readable), log: false);
         }
+
         $data = $generator->toArray();
         if ($useYaml) {
             return $this->saveFile($logger, $output, $destination, Encoder::toYaml($data, $inline, $indent, $options), log: false);
         }
+
         return $this->saveFile($logger, $output, $destination, Encoder::toJson($data, $options, $readable), log: false);
     }
-
 }

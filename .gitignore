@@ -3,3 +3,4 @@ vendor/
 .phpunit.result.cache
 composer.phar
 out
+.php-cs-fixer.cache

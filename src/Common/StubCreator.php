@@ -1,12 +1,11 @@
 <?php
+
 /** @noinspection PhpArrayShapeAttributeCanBeAddedInspection */
 
 /** @noinspection PhpInternalEntityUsedInspection */
 
-
 namespace TgScraper\Common;
 
-use InvalidArgumentException;
 use Nette\PhpGenerator\Helpers;
 use Nette\PhpGenerator\PhpFile;
 use Nette\PhpGenerator\PhpNamespace;
@@ -15,45 +14,43 @@ use Nette\PhpGenerator\Type;
 use TgScraper\TgScraper;
 
 /**
- * Class StubCreator
- * @package TgScraper\Common
+ * Class StubCreator.
  */
 class StubCreator
 {
-
-
-    /**
-     * @var string
-     */
     private string $namespace;
+
     /**
-     * @var array
+     * @var array<string>
      */
     private array $abstractClasses = [];
+
     /**
-     * @var array
+     * @var array<string>
      */
     private array $extendedClasses = [];
 
     /**
      * StubCreator constructor.
-     * @param array $schema
-     * @param string $namespace
-     * @throws InvalidArgumentException
+     *
+     * @throws \InvalidArgumentException
      */
     public function __construct(private array $schema, string $namespace = '')
     {
         if (str_ends_with($namespace, '\\')) {
             $namespace = substr($namespace, 0, -1);
         }
+
         if (!empty($namespace)) {
             if (!Helpers::isNamespaceIdentifier($namespace)) {
-                throw new InvalidArgumentException('Namespace invalid');
+                throw new \InvalidArgumentException('Namespace invalid');
             }
         }
+
         if (!TgScraper::validateSchema($this->schema)) {
-            throw new InvalidArgumentException('Schema invalid');
+            throw new \InvalidArgumentException('Schema invalid');
         }
+
         $this->getExtendedTypes();
         $this->namespace = $namespace;
     }
@@ -73,20 +70,11 @@ class StubCreator
         }
     }
 
-    /**
-     * @param string $str
-     * @return string
-     */
     private static function toCamelCase(string $str): string
     {
         return lcfirst(str_replace(' ', '', ucwords(str_replace('_', ' ', $str))));
     }
 
-    /**
-     * @param array $fieldTypes
-     * @param PhpNamespace $phpNamespace
-     * @return array
-     */
     private function parseFieldTypes(array $fieldTypes, PhpNamespace $phpNamespace): array
     {
         $types = [];
@@ -104,6 +92,7 @@ class StubCreator
             if (ucfirst($fieldType) == $fieldType) {
                 $fieldType = $phpNamespace->getName() . '\\' . $fieldType;
             }
+
             $types[] = $fieldType;
         }
 
@@ -111,15 +100,10 @@ class StubCreator
 
         return [
             'types' => implode('|', $types),
-            'comments' => $comments
+            'comments' => $comments,
         ];
     }
 
-    /**
-     * @param array $apiTypes
-     * @param PhpNamespace $phpNamespace
-     * @return array
-     */
     private function parseApiFieldTypes(array $apiTypes, PhpNamespace $phpNamespace): array
     {
         $types = [];
@@ -132,6 +116,7 @@ class StubCreator
                 while (preg_match('/Array<(.+)>/', $text, $matches) === 1) {
                     $text = $matches[1];
                 }
+
                 $subTypes = explode('|', $text);
                 foreach ($subTypes as $subType) {
                     if (ucfirst($subType) == $subType) {
@@ -139,31 +124,35 @@ class StubCreator
                         $phpNamespace->addUse($subType);
                     }
                 }
+
                 continue;
             }
+
             if (ucfirst($apiType) == $apiType) {
                 $apiType = $this->namespace . '\\Types\\' . $apiType;
                 $phpNamespace->addUse($apiType);
             }
+
             $types[] = $apiType;
         }
+
         $comments = empty($comments) ? '' : sprintf('@param %s', implode('|', $comments));
+
         return [
             'types' => implode('|', $types),
-            'comments' => $comments
+            'comments' => $comments,
         ];
     }
 
     /**
-     * @param string $namespace
      * @return PhpFile[]
      */
     private function generateDefaultTypes(string $namespace): array
     {
-        $interfaceFile = new PhpFile;
+        $interfaceFile = new PhpFile();
         $interfaceNamespace = $interfaceFile->addNamespace($namespace);
         $interfaceNamespace->addInterface('TypeInterface');
-        $responseFile = new PhpFile;
+        $responseFile = new PhpFile();
         $responseNamespace = $responseFile->addNamespace($namespace);
         $responseNamespace->addUse('stdClass');
         $response = $responseNamespace->addClass('Response');
@@ -191,9 +180,10 @@ class StubCreator
             ->setNullable()
             ->setValue(null);
         $response->addImplement($namespace . '\\TypeInterface');
+
         return [
             'Response' => $responseFile,
-            'TypeInterface' => $interfaceFile
+            'TypeInterface' => $interfaceFile,
         ];
     }
 
@@ -206,7 +196,7 @@ class StubCreator
         $types = $this->generateDefaultTypes($namespace);
 
         foreach ($this->schema['types'] as $type) {
-            $file = new PhpFile;
+            $file = new PhpFile();
             $phpNamespace = $file->addNamespace($namespace);
             $typeClass = $phpNamespace->addClass($type['name']);
 
@@ -256,7 +246,7 @@ class StubCreator
                 $params[] = [$param, $fieldComment];
             }
 
-            usort($params, function($a, $b) {
+            usort($params, function ($a, $b) {
                 $aHasDefault = $a[0]->hasDefaultValue();
                 $bHasDefault = $b[0]->hasDefaultValue();
 
@@ -267,8 +257,8 @@ class StubCreator
                 return $aHasDefault ? 1 : -1;
             });
 
-            $constructor->setParameters(array_map(fn($a) => $a[0], $params));
-            $constructor->setComment(implode("\n", array_map(fn($a) => $a[1], $params)));
+            $constructor->setParameters(array_map(fn ($a) => $a[0], $params));
+            $constructor->setComment(implode("\n", array_map(fn ($a) => $a[1], $params)));
 
             $types[$type['name']] = $file;
         }
@@ -276,25 +266,21 @@ class StubCreator
         return $types;
     }
 
-
-    /**
-     * @return PhpFile
-     */
     private function generateApi(): PhpFile
     {
-        $file = new PhpFile;
+        $file = new PhpFile();
         $file->addComment('@noinspection PhpUnused');
         $file->addComment('@noinspection PhpUnusedParameterInspection');
         $phpNamespace = $file->addNamespace($this->namespace);
-        $apiClass = $phpNamespace->addTrait('API');
+        $apiClass = $phpNamespace->addClass('API');
         $sendRequest = $apiClass->addMethod('sendRequest')
             ->setPublic()
             ->setAbstract()
-            ->setReturnType(Type::MIXED);
+            ->setReturnType(Type::Mixed);
         $sendRequest->addParameter('method')
-            ->setType(Type::STRING);
+            ->setType(Type::String);
         $sendRequest->addParameter('args')
-            ->setType(Type::ARRAY);
+            ->setType(Type::Array);
         foreach ($this->schema['methods'] as $method) {
             $function = $apiClass->addMethod($method['name'])
                 ->setPublic()
@@ -317,16 +303,20 @@ class StubCreator
                 if (!empty($default) and (!is_string($default) or lcfirst($default) == $default)) {
                     $parameter->setDefaultValue($default);
                 }
+
                 if ($field['optional']) {
                     $parameter->setNullable();
                     if (!$parameter->hasDefaultValue()) {
                         $parameter->setDefaultValue(null);
                     }
+
                     $comment .= '|null';
                 }
+
                 $comment .= sprintf(' $%s %s', $fieldName, $field['description']);
                 $function->addComment($comment);
             }
+
             ['types' => $returnTypes, 'comments' => $returnComment] = $this->parseApiFieldTypes(
                 $method['return_types'],
                 $phpNamespace
@@ -334,6 +324,7 @@ class StubCreator
             $function->setReturnType($returnTypes);
             $function->addComment(str_replace('param', 'return', $returnComment));
         }
+
         return $file;
     }
 
@@ -344,8 +335,7 @@ class StubCreator
     {
         return [
             'types' => $this->generateTypes(),
-            'api' => $this->generateApi()
+            'api' => $this->generateApi(),
         ];
     }
-
 }

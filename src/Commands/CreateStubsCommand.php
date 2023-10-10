@@ -1,10 +1,7 @@
 <?php
 
-
 namespace TgScraper\Commands;
 
-
-use Exception;
 use Symfony\Component\Console\Command\Command;
 use Symfony\Component\Console\Input\InputArgument;
 use Symfony\Component\Console\Input\InputInterface;
@@ -13,11 +10,9 @@ use Symfony\Component\Console\Logger\ConsoleLogger;
 use Symfony\Component\Console\Output\OutputInterface;
 use TgScraper\Constants\Versions;
 use TgScraper\TgScraper;
-use Throwable;
 
 class CreateStubsCommand extends Command
 {
-
     protected static $defaultName = 'app:create-stubs';
 
     protected function validateData(string|false $data): bool
@@ -60,6 +55,7 @@ class CreateStubsCommand extends Command
         if ($input->getOption('prefer-stable')) {
             $version = Versions::STABLE;
         }
+
         $yamlPath = $input->getOption('yaml');
         if (empty($yamlPath)) {
             $jsonPath = $input->getOption('json');
@@ -68,15 +64,17 @@ class CreateStubsCommand extends Command
                 try {
                     $output->writeln('Fetching data for version...');
                     $generator = TgScraper::fromVersion($logger, $version);
-                } catch (Throwable) {
+                } catch (\Throwable) {
                     return Command::FAILURE;
                 }
             } else {
                 $data = file_get_contents($jsonPath);
                 if (!$this->validateData($data)) {
                     $logger->critical('Invalid JSON file provided');
+
                     return Command::INVALID;
                 }
+
                 $logger->info('Using JSON schema: ' . $jsonPath);
                 /** @noinspection PhpUnhandledExceptionInspection */
                 $generator = TgScraper::fromJson($logger, $data);
@@ -85,21 +83,26 @@ class CreateStubsCommand extends Command
             $data = file_get_contents($yamlPath);
             if (!$this->validateData($data)) {
                 $logger->critical('Invalid YAML file provided');
+
                 return Command::INVALID;
             }
+
             $logger->info('Using YAML schema: ' . $yamlPath);
             /** @noinspection PhpUnhandledExceptionInspection */
             $generator = TgScraper::fromYaml($logger, $data);
         }
+
         try {
             $output->writeln('Creating stubs...');
             $generator->toStubs($input->getArgument('destination'), $input->getOption('namespace-prefix'));
-        } catch (Exception) {
+        } catch (\Exception) {
             $logger->critical('Could not create stubs.');
+
             return Command::FAILURE;
         }
+
         $output->writeln('Done!');
+
         return Command::SUCCESS;
     }
-
 }
