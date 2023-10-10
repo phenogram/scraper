@@ -223,6 +223,8 @@ class StubCreator
                 $typeClass->addImplement($namespace . '\\TypeInterface');
             }
 
+            $typeClass->setComment($type['description'] ?? null);
+
             foreach ($type['fields'] as $field) {
                 ['types' => $fieldType, 'comments' => $fieldComment] = $this->parseFieldTypes(
                     $field['types'],
