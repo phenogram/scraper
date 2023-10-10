@@ -9,6 +9,82 @@
 A PHP library used to extract JSON data (and auto-generate PHP classes)
 from [Telegram bot API documentation page](https://core.telegram.org/bots/api).
 
+## Fork motivation
+### Promoted properties
+The main reason is I like PHP 8 promoted properties, so in this repo the stubs are generated like that.
+
+old:
+```php
+class BotCommand implements TypeInterface
+{
+    /** @var string Text of the command; 1-32 characters. Can contain only lowercase English letters, digits and underscores. */
+    public string $command;
+
+    /** @var string Description of the command; 1-256 characters. */
+    public string $description;
+}
+```
+
+new:
+```php
+/**
+ * This object represents a bot command.
+ */
+class BotCommand implements TypeInterface
+{
+    /**
+     * @param string $command     Text of the command; 1-32 characters. Can contain only lowercase English letters, digits and underscores.
+     * @param string $description description of the command; 1-256 characters
+     */
+    public function __construct(
+        public string $command,
+        public string $description,
+    ) {
+    }
+}
+```
+
+### Change API type from Trait with abstract methods to a class utilizing the new Client interface
+Traits are good, but I just don't think it's appropriate to use it in this case.
+And I think my approach allows for more flexibility.
+
+old:
+```php
+...
+Trait API
+{
+    abstract public function sendRequest(string $method, array $args): mixed;
+...
+```
+
+new:
+```php
+// TelegramBotApi.php
+// ...
+class TelegramBotApi
+{
+	public function __construct(
+		protected TelegramBotApiClientInterface $client,
+	) {
+	}
+```
+
+```php
+// TelegramBotApiClientInterface.php
+// ...
+interface TelegramBotApiClientInterface
+{
+	function sendRequest(string $method, array $args): mixed;
+}
+
+```
+
+### Misc.
+1. Changed class/file names
+2. Add comments to type classes
+3. Sort class params from required to optional
+4. Code style
+
 ## Changelog
 
 Interested in recent changes? Have a look [here](CHANGELOG.md)!
