@@ -275,9 +275,9 @@ class StubCreator
         $file->addComment('@noinspection PhpUnusedParameterInspection');
 
         $phpNamespace = $file->addNamespace($this->namespace);
-        $apiClass = $phpNamespace->addClass('TelegramApi');
+        $apiClass = $phpNamespace->addClass('TelegramBotApi');
 
-        [$clientInterfaceFile, $clientInterface] = $this->generateTelegramApiClientInterface();
+        [$clientInterfaceFile, $clientInterface] = $this->generateTelegramBotApiClientInterface();
 
         $constructor = $apiClass->addMethod('__construct');
         $constructor
@@ -342,12 +342,12 @@ class StubCreator
     /**
      * @return array{0: PhpFile, 1: PhpNamespace}
      */
-    private function generateTelegramApiClientInterface(): array
+    private function generateTelegramBotApiClientInterface(): array
     {
         $file = new PhpFile();
 
         $phpNamespace = $file->addNamespace($this->namespace);
-        $interface = $phpNamespace->addInterface('TelegramApiClientInterface');
+        $interface = $phpNamespace->addInterface('TelegramBotApiClientInterface');
 
         $method = $interface->addMethod('sendRequest');
 

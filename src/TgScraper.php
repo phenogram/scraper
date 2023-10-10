@@ -128,8 +128,15 @@ class TgScraper
             file_put_contents($filename, $type);
         }
 
-        file_put_contents($directory . '/TelegramApiClientInterface.php', $clientInterface);
-        file_put_contents($directory . '/TelegramApi.php', $api);
+        file_put_contents(
+            $directory . '/' . array_values($clientInterface->getClasses())[0]->getName() . '.php',
+            (string) $clientInterface
+        );
+
+        file_put_contents(
+            $directory . '/' . array_values($api->getClasses())[0]->getName() . '.php',
+            $api
+        );
     }
 
     /**
