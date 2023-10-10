@@ -10,6 +10,7 @@ use InvalidArgumentException;
 use Nette\PhpGenerator\Helpers;
 use Nette\PhpGenerator\PhpFile;
 use Nette\PhpGenerator\PhpNamespace;
+use Nette\PhpGenerator\PromotedParameter;
 use Nette\PhpGenerator\Type;
 use TgScraper\TgScraper;
 
@@ -91,17 +92,23 @@ class StubCreator
         $types = [];
         $comments = [];
         foreach ($fieldTypes as $fieldType) {
-            $comments[] = $fieldType;
             if (str_starts_with($fieldType, 'Array')) {
                 $types[] = 'array';
+                $comments[] = str_replace('Array', 'array', $fieldType);
+
                 continue;
             }
+
+            $comments[] = $fieldType;
+
             if (ucfirst($fieldType) == $fieldType) {
                 $fieldType = $phpNamespace->getName() . '\\' . $fieldType;
             }
             $types[] = $fieldType;
         }
-        $comments = empty($comments) ? '' : sprintf('@var %s', implode('|', $comments));
+
+        $comments = empty($comments) ? '' : sprintf('@param %s', implode('|', $comments));
+
         return [
             'types' => implode('|', $types),
             'comments' => $comments
@@ -197,47 +204,76 @@ class StubCreator
     {
         $namespace = $this->namespace . '\\Types';
         $types = $this->generateDefaultTypes($namespace);
+
         foreach ($this->schema['types'] as $type) {
             $file = new PhpFile;
             $phpNamespace = $file->addNamespace($namespace);
             $typeClass = $phpNamespace->addClass($type['name']);
+
+            $constructor = $typeClass->addMethod('__construct');
+            $params = [];
+
             if (in_array($type['name'], $this->abstractClasses)) {
                 $typeClass->setAbstract();
             }
+
             if (array_key_exists($type['name'], $this->extendedClasses)) {
                 $typeClass->setExtends($namespace . '\\' . $this->extendedClasses[$type['name']]);
             } else {
                 $typeClass->addImplement($namespace . '\\TypeInterface');
             }
+
             foreach ($type['fields'] as $field) {
-                ['types' => $fieldTypes, 'comments' => $fieldComments] = $this->parseFieldTypes(
+                ['types' => $fieldType, 'comments' => $fieldComment] = $this->parseFieldTypes(
                     $field['types'],
                     $phpNamespace
                 );
+
                 $fieldName = self::toCamelCase($field['name']);
-                $typeProperty = $typeClass->addProperty($fieldName)
-                    ->setPublic()
-                    ->setType($fieldTypes);
-                $default = $field['default'] ?? null;
-                if (!empty($default)) {
-                    $typeProperty->setValue($default);
+                $param = (new PromotedParameter($fieldName))->setType($fieldType);
+
+                if (isset($field['default'])) {
+                    $param->setDefaultValue($field['default']);
                 }
+
                 if ($field['optional']) {
-                    $typeProperty->setNullable();
-                    if (!$typeProperty->isInitialized()) {
-                        $typeProperty->setValue(null);
+                    $param->setNullable();
+                    if (!$param->hasDefaultValue()) {
+                        $param->setDefaultValue(null);
                     }
-                    $fieldComments .= '|null';
+
+                    if ($fieldComment !== '') {
+                        $fieldComment .= '|null';
+                    }
                 }
-                if (!empty($fieldComments)) {
-                    $fieldComments .= ' ' . $field['description'];
-                    $typeProperty->addComment($fieldComments);
+
+                if ($fieldComment !== '') {
+                    $fieldComment .= sprintf(' $%s %s', $fieldName, $field['description']);
                 }
+
+                $params[] = [$param, $fieldComment];
             }
+
+            usort($params, function($a, $b) {
+                $aHasDefault = $a[0]->hasDefaultValue();
+                $bHasDefault = $b[0]->hasDefaultValue();
+
+                if ($aHasDefault === $bHasDefault) {
+                    return 0;
+                }
+
+                return $aHasDefault ? 1 : -1;
+            });
+
+            $constructor->setParameters(array_map(fn($a) => $a[0], $params));
+            $constructor->setComment(implode("\n", array_map(fn($a) => $a[1], $params)));
+
             $types[$type['name']] = $file;
         }
+
         return $types;
     }
+
 
     /**
      * @return PhpFile
