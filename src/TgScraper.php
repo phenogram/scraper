@@ -116,14 +116,20 @@ class TgScraper
             throw $e;
         }
 
-        $code = $creator->generateCode();
-        foreach ($code['types'] as $className => $type) {
+        [
+            'types' => $types,
+            'api' => $api,
+            'clientInterface' => $clientInterface,
+        ] = $creator->generateCode();
+
+        foreach ($types as $className => $type) {
             $this->logger->info('Generating class for Type: ' . $className);
             $filename = sprintf('%s/Types/%s.php', $directory, $className);
             file_put_contents($filename, $type);
         }
 
-        file_put_contents($directory . '/API.php', $code['api']);
+        file_put_contents($directory . '/TelegramApiClientInterface.php', $clientInterface);
+        file_put_contents($directory . '/TelegramApi.php', $api);
     }
 
     /**

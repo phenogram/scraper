@@ -109,10 +109,13 @@ class StubCreator
         $types = [];
         $comments = [];
         foreach ($apiTypes as $apiType) {
-            $comments[] = $apiType;
             if (str_starts_with($apiType, 'Array')) {
                 $types[] = 'array';
+
+                $comments[] = str_replace('Array', 'array', $apiType);
+
                 $text = $apiType;
+
                 while (preg_match('/Array<(.+)>/', $text, $matches) === 1) {
                     $text = $matches[1];
                 }
@@ -127,6 +130,8 @@ class StubCreator
 
                 continue;
             }
+
+            $comments[] = $apiType;
 
             if (ucfirst($apiType) == $apiType) {
                 $apiType = $this->namespace . '\\Types\\' . $apiType;
@@ -247,14 +252,7 @@ class StubCreator
             }
 
             usort($params, function ($a, $b) {
-                $aHasDefault = $a[0]->hasDefaultValue();
-                $bHasDefault = $b[0]->hasDefaultValue();
-
-                if ($aHasDefault === $bHasDefault) {
-                    return 0;
-                }
-
-                return $aHasDefault ? 1 : -1;
+                return (int) $a[0]->hasDefaultValue() - (int) $b[0]->hasDefaultValue();
             });
 
             $constructor->setParameters(array_map(fn ($a) => $a[0], $params));
@@ -266,26 +264,32 @@ class StubCreator
         return $types;
     }
 
-    private function generateApi(): PhpFile
+    /**
+     * @return array{api: PhpFile, clientInterface: PhpFile}
+     */
+    private function generateApi(): array
     {
         $file = new PhpFile();
+
         $file->addComment('@noinspection PhpUnused');
         $file->addComment('@noinspection PhpUnusedParameterInspection');
+
         $phpNamespace = $file->addNamespace($this->namespace);
-        $apiClass = $phpNamespace->addClass('API');
-        $sendRequest = $apiClass->addMethod('sendRequest')
-            ->setPublic()
-            ->setAbstract()
-            ->setReturnType(Type::Mixed);
-        $sendRequest->addParameter('method')
-            ->setType(Type::String);
-        $sendRequest->addParameter('args')
-            ->setType(Type::Array);
+        $apiClass = $phpNamespace->addClass('TelegramApi');
+
+        [$clientInterfaceFile, $clientInterface] = $this->generateTelegramApiClientInterface();
+
+        $constructor = $apiClass->addMethod('__construct');
+        $constructor
+            ->addPromotedParameter('client')
+            ->setType($this->namespace . '\\' . $clientInterface->getName())
+            ->setVisibility('protected');
+
         foreach ($this->schema['methods'] as $method) {
             $function = $apiClass->addMethod($method['name'])
                 ->setPublic()
-                ->addBody('$args = get_defined_vars();')
-                ->addBody('return $this->sendRequest(__FUNCTION__, $args);');
+                ->addBody('return $this->client->sendRequest(__FUNCTION__, get_defined_vars());');
+
             $function->addComment($method['description']);
             $fields = $method['fields'];
             usort(
@@ -295,10 +299,16 @@ class StubCreator
                 }
             );
             foreach ($fields as $field) {
-                ['types' => $types, 'comments' => $comment] = $this->parseApiFieldTypes($field['types'], $phpNamespace);
+                [
+                    'types' => $types,
+                    'comments' => $comment
+                ] = $this->parseApiFieldTypes($field['types'], $phpNamespace);
+
                 $fieldName = self::toCamelCase($field['name']);
-                $parameter = $function->addParameter($fieldName)
+                $parameter = $function
+                    ->addParameter($fieldName)
                     ->setType($types);
+
                 $default = $field['default'] ?? null;
                 if (!empty($default) and (!is_string($default) or lcfirst($default) == $default)) {
                     $parameter->setDefaultValue($default);
@@ -317,25 +327,48 @@ class StubCreator
                 $function->addComment($comment);
             }
 
-            ['types' => $returnTypes, 'comments' => $returnComment] = $this->parseApiFieldTypes(
-                $method['return_types'],
-                $phpNamespace
-            );
+            [
+                'types' => $returnTypes,
+                'comments' => $returnComment
+            ] = $this->parseApiFieldTypes($method['return_types'], $phpNamespace);
+
             $function->setReturnType($returnTypes);
             $function->addComment(str_replace('param', 'return', $returnComment));
         }
 
-        return $file;
+        return ['api' => $file, 'clientInterface' => $clientInterfaceFile];
     }
 
     /**
-     * @return array{types: PhpFile[], api: PhpFile}
+     * @return array{0: PhpFile, 1: PhpNamespace}
+     */
+    private function generateTelegramApiClientInterface(): array
+    {
+        $file = new PhpFile();
+
+        $phpNamespace = $file->addNamespace($this->namespace);
+        $interface = $phpNamespace->addInterface('TelegramApiClientInterface');
+
+        $method = $interface->addMethod('sendRequest');
+
+        $method->addParameter('method')->setType(Type::String);
+        $method->addParameter('args')->setType(Type::Array);
+        $method->setReturnType(Type::Mixed);
+
+        return [$file, $interface];
+    }
+
+    /**
+     * @return array{types: PhpFile[], api: PhpFile, clientInterface: PhpFile}
      */
     public function generateCode(): array
     {
+        ['api' => $apiFile, 'clientInterface' => $clientInterface] = $this->generateApi();
+
         return [
             'types' => $this->generateTypes(),
-            'api' => $this->generateApi(),
+            'api' => $apiFile,
+            'clientInterface' => $clientInterface,
         ];
     }
 }
