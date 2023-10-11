@@ -483,18 +483,22 @@ class StubCreator
                 )
             );
 
-            $functionBody = '$returnTypes = ["' . implode('","', $expectedReturnTypes) . '"];' . "\n";
-            $functionBody .= <<<'BODY'
-                return $this->client->convertResponseToType(
-                    $this->client->sendRequest(__FUNCTION__, get_defined_vars()),
-                    $returnTypes
+            $function
+                ->addBody('$args = get_defined_vars();')
+                ->addBody('$returnTypes = ["' . implode('", "', $expectedReturnTypes) . '"];')
+                ->addBody(
+                    <<<'BODY'
+                    
+                    return $this->client->convertResponseToType(
+                        $this->client->sendRequest(__FUNCTION__, $args),
+                        $returnTypes
+                    );
+                    BODY
                 );
-                BODY;
 
             $function
                 ->setReturnType($returnTypes)
-                ->addComment(str_replace('param', 'return', $returnComment))
-                ->addBody($functionBody);
+                ->addComment(str_replace('param', 'return', $returnComment));
         }
 
         return ['api' => $file, 'clientInterface' => $clientInterfaceFile];
