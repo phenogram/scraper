@@ -321,7 +321,7 @@ class StubCreator
             $missingFields = [];
 
             foreach ($requiredFields as $field) {
-                if (!isset($data[$field])) {
+                if (!isset($result[$field])) {
                     $missingFields[] = $field;
                 }
             }
@@ -361,7 +361,7 @@ class StubCreator
             if (!Validators::isBuiltinType($param->getType())) {
                 if ($defaultValue !== null) {
                     $value = <<<VALUE
-                    $value !== null
+                    ($value ?? null) !== null
                             ? \\{$param->getType()}::fromResponseResult($value)
                             : {$defaultValue}
                     VALUE;
