@@ -6,12 +6,15 @@
 
 namespace TgScraper\Common;
 
-use _PHPStan_532094bc1\Nette\Utils\Reflection;
+use Illuminate\Support\Str;
 use Nette\PhpGenerator\Helpers;
+use Nette\PhpGenerator\Method;
+use Nette\PhpGenerator\Parameter;
 use Nette\PhpGenerator\PhpFile;
 use Nette\PhpGenerator\PhpNamespace;
 use Nette\PhpGenerator\PromotedParameter;
 use Nette\PhpGenerator\Type;
+use Nette\Utils\Validators;
 use TgScraper\TgScraper;
 
 /**
@@ -158,15 +161,23 @@ class StubCreator
     private function generateDefaultTypes(string $namespace): array
     {
         $interfaceFile = new PhpFile();
+
         $interfaceNamespace = $interfaceFile->addNamespace($namespace);
-        $interfaceNamespace->addInterface('TypeInterface');
+        $interfaceNamespace
+            ->addInterface('TypeInterface')
+            ->addMethod('fromResponseResult')
+            ->setStatic()
+            ->setReturnType('self')
+            ->addParameter('result')
+            ->setType(Type::Array);
+
         $responseFile = new PhpFile();
         $responseNamespace = $responseFile->addNamespace($namespace);
         $responseNamespace->addUse('stdClass');
         $response = $responseNamespace->addClass('Response');
         $response->addProperty('ok')
             ->setPublic()
-            ->setType(Type::BOOL);
+            ->setType(Type::Bool);
         $response->addProperty('result')
             ->setPublic()
             ->setType(sprintf('stdClass|%s\\TypeInterface|array|int|string|bool', $namespace))
@@ -211,7 +222,9 @@ class StubCreator
             $constructor = $typeClass->addMethod('__construct');
             $params = [];
 
-            if (in_array($type['name'], $this->abstractClasses)) {
+            $isAbstract = in_array($type['name'], $this->abstractClasses);
+
+            if ($isAbstract) {
                 $typeClass->setAbstract();
             }
 
@@ -261,10 +274,115 @@ class StubCreator
             $constructor->setParameters(array_map(fn ($a) => $a[0], $params));
             $constructor->setComment(implode("\n", array_map(fn ($a) => $a[1], $params)));
 
+            $fromResponseResultMethod = $this->generateFromArrayMethod(
+                array_map(fn ($a) => $a[0], $params)
+            );
+
+            $typeClass->setMethods(array_merge(
+                $typeClass->getMethods(),
+                [$fromResponseResultMethod->getName() => $fromResponseResultMethod],
+            ));
+
             $types[$type['name']] = $file;
         }
 
         return $types;
+    }
+
+    private function generateFromArrayMethod(array $params): Method
+    {
+        $fromResponseResultMethod = new Method('fromResponseResult');
+        $fromResponseResultMethod->setStatic()->setPublic();
+        $fromResponseResultMethod->setReturnType('self');
+        $fromResponseResultMethod
+            ->addParameter('result')
+            ->setType(Type::Array);
+
+        if (count($params) === 0) {
+            $fromResponseResultMethod->addBody('return new self();');
+
+            return $fromResponseResultMethod;
+        }
+
+        $requiredParams = array_filter($params, fn ($param) => !$param->hasDefaultValue());
+
+        $fromResponseResultMethod->addBody('$requiredFields = [');
+        foreach ($requiredParams as $param) {
+            $fromResponseResultMethod->addBody(sprintf(
+                '    \'%s\',',
+                Str::snake($param->getName())
+            ));
+        }
+
+        $fromResponseResultMethod->addBody("];\n");
+
+        $fromResponseResultMethod->addBody(
+            <<<'RequiredCheck'
+            $missingFields = [];
+
+            foreach ($requiredFields as $field) {
+                if (!isset($data[$field])) {
+                    $missingFields[] = $field;
+                }
+            }
+
+            if (count($missingFields) > 0) {
+                throw new \InvalidArgumentException(sprintf(
+                    'Class %s missing some fields from the result array: %s',
+                    static::class,
+                    implode(', ', $missingFields),
+                ));
+            }
+
+            RequiredCheck
+        );
+
+        $fromResponseResultMethod->addBody('return new self(');
+
+        /** @var Parameter $param */
+        foreach ($params as $param) {
+            if ($param->hasDefaultValue()) {
+                $defaultValue = $param->getDefaultValue();
+                if (is_string($defaultValue)) {
+                    $defaultValue = sprintf('\'%s\'', $defaultValue);
+                } elseif (is_bool($defaultValue)) {
+                    $defaultValue = sprintf('%s', $defaultValue ? 'true' : 'false');
+                } elseif (is_null($defaultValue)) {
+                    $defaultValue = 'null';
+                } else {
+                    $defaultValue = null;
+                }
+            } else {
+                $defaultValue = null;
+            }
+
+            $value = sprintf('$result[\'%s\']', Str::snake($param->getName()));
+
+            if (!Validators::isBuiltinType($param->getType())) {
+                if ($defaultValue !== null) {
+                    $value = <<<VALUE
+                    $value !== null
+                            ? \\{$param->getType()}::fromResponseResult($value)
+                            : {$defaultValue}
+                    VALUE;
+
+                    $defaultValue = null;
+                } else {
+                    $value = "\\{$param->getType()}::fromResponseResult($value)";
+                }
+            }
+
+            $fromResponseResultMethod->addBody(sprintf(
+                '    %s: %s%s,',
+                $param->getName(),
+                $value,
+                $defaultValue !== null ? sprintf(' ?? %s', $defaultValue) : ''
+            ));
+        }
+
+        $fromResponseResultMethod->addBody(');');
+
+        return $fromResponseResultMethod;
     }
 
     /**
@@ -338,7 +456,7 @@ class StubCreator
 
             $expectedReturnTypes = array_map(
                 function (string $type) {
-                    if (Reflection::isBuiltinType($type)) {
+                    if (Validators::isBuiltinType($type)) {
                         return $type;
                     }
 
@@ -348,7 +466,7 @@ class StubCreator
                         $realType = $realType[count($realType) - 1];
                         $realType = explode('>', $realType)[0];
 
-                        if (Reflection::isBuiltinType($realType)) {
+                        if (Validators::isBuiltinType($realType)) {
                             return $type;
                         }
 
