@@ -245,18 +245,16 @@ class StubCreator
                 $fieldName = self::toCamelCase($field['name']);
                 $param = (new PromotedParameter($fieldName))->setType($fieldType);
 
-                if (isset($field['default'])) {
-                    $param->setDefaultValue($field['default']);
-                }
-
                 if ($field['optional']) {
                     $param->setNullable();
-                    if (!$param->hasDefaultValue()) {
-                        $param->setDefaultValue(null);
-                    }
+                    $param->setDefaultValue(null);
 
                     if ($fieldComment !== '') {
                         $fieldComment .= '|null';
+                    }
+                } else {
+                    if (isset($field['default'])) {
+                        $param->setDefaultValue($field['default']);
                     }
                 }
 
@@ -363,7 +361,7 @@ class StubCreator
                     $value = <<<VALUE
                     ($value ?? null) !== null
                             ? \\{$param->getType()}::fromResponseResult($value)
-                            : {$defaultValue}
+                            : null
                     VALUE;
 
                     $defaultValue = null;
