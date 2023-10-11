@@ -6,6 +6,7 @@
 
 namespace TgScraper\Common;
 
+use _PHPStan_532094bc1\Nette\Utils\Reflection;
 use Nette\PhpGenerator\Helpers;
 use Nette\PhpGenerator\PhpFile;
 use Nette\PhpGenerator\PhpNamespace;
@@ -108,6 +109,8 @@ class StubCreator
     {
         $types = [];
         $comments = [];
+        $expectedReturnTypes = [];
+
         foreach ($apiTypes as $apiType) {
             if (str_starts_with($apiType, 'Array')) {
                 $types[] = 'array';
@@ -286,11 +289,11 @@ class StubCreator
             ->setVisibility('protected');
 
         foreach ($this->schema['methods'] as $method) {
-            $function = $apiClass->addMethod($method['name'])
+            $function = $apiClass
+                ->addMethod($method['name'])
                 ->setPublic()
-                ->addBody('return $this->client->sendRequest(__FUNCTION__, get_defined_vars());');
+                ->addComment($method['description']);
 
-            $function->addComment($method['description']);
             $fields = $method['fields'];
             usort(
                 $fields,
@@ -298,6 +301,7 @@ class StubCreator
                     return $a['optional'] - $b['optional'];
                 }
             );
+
             foreach ($fields as $field) {
                 [
                     'types' => $types,
@@ -332,8 +336,49 @@ class StubCreator
                 'comments' => $returnComment
             ] = $this->parseApiFieldTypes($method['return_types'], $phpNamespace);
 
-            $function->setReturnType($returnTypes);
-            $function->addComment(str_replace('param', 'return', $returnComment));
+            $expectedReturnTypes = array_map(
+                function (string $type) {
+                    if (Reflection::isBuiltinType($type)) {
+                        return $type;
+                    }
+
+                    if (str_starts_with($type, 'array')) {
+                        // find the last type in the array
+                        $realType = explode('<', $type);
+                        $realType = $realType[count($realType) - 1];
+                        $realType = explode('>', $realType)[0];
+
+                        if (Reflection::isBuiltinType($realType)) {
+                            return $type;
+                        }
+
+                        return str_replace(
+                            $realType,
+                            $this->namespace . '\\Types\\' . $realType,
+                            $type
+                        );
+                    }
+
+                    return $this->namespace . '\\Types\\' . $type;
+                },
+                explode(
+                    '|',
+                    str_replace('@param ', '', $returnComment)
+                )
+            );
+
+            $functionBody = '$returnTypes = ["' . implode('","', $expectedReturnTypes) . '"];' . "\n";
+            $functionBody .= <<<'BODY'
+                return $this->client->convertResponseToType(
+                    $this->client->sendRequest(__FUNCTION__, get_defined_vars()),
+                    $returnTypes
+                );
+                BODY;
+
+            $function
+                ->setReturnType($returnTypes)
+                ->addComment(str_replace('param', 'return', $returnComment))
+                ->addBody($functionBody);
         }
 
         return ['api' => $file, 'clientInterface' => $clientInterfaceFile];
@@ -347,13 +392,24 @@ class StubCreator
         $file = new PhpFile();
 
         $phpNamespace = $file->addNamespace($this->namespace);
+        $phpNamespace->addUse($this->namespace . '\\Types\\TypeInterface');
+
         $interface = $phpNamespace->addInterface('TelegramBotApiClientInterface');
 
-        $method = $interface->addMethod('sendRequest');
-
+        $method = $interface->addMethod('sendRequest')->setPublic();
         $method->addParameter('method')->setType(Type::String);
         $method->addParameter('args')->setType(Type::Array);
         $method->setReturnType(Type::Mixed);
+
+        $method = $interface->addMethod('convertResponseToType')->setPublic();
+        $method->addParameter('response')->setType(Type::Mixed);
+        $method->addParameter('returnTypes')->setType(Type::Array);
+        $method->setReturnType(
+            sprintf('%s\\Types\\TypeInterface|array|int|string|bool', $this->namespace)
+        );
+        $method->addComment('@param mixed $response');
+        $method->addComment('@param array<string> $returnTypes');
+        $method->addComment('@return TypeInterface|array<TypeInterface>|bool|string|int');
 
         return [$file, $interface];
     }
