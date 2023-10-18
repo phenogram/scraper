@@ -464,7 +464,7 @@ class StubCreator
         $file = new PhpFile();
 
         $phpNamespace = $file->addNamespace($this->namespace);
-        $phpNamespace->addUse($this->namespace . '\\Types\\TypeInterface');
+        $phpNamespace->addUse('React\Promise\PromiseInterface');
 
         $interface = $phpNamespace->addInterface('TelegramBotApiClientInterface');
 
@@ -472,7 +472,7 @@ class StubCreator
 
         $method->addParameter('method')->setType(Type::String);
         $method->addParameter('json')->setType(Type::String);
-        $method->setReturnType(Type::Mixed);
+        $method->setReturnType('React\Promise\PromiseInterface');
 
         $method = $interface->addMethod('serialize')->setPublic();
         $method->addParameter('data')->setType(Type::Mixed);
