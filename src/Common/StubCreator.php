@@ -12,6 +12,7 @@ use Nette\PhpGenerator\PhpNamespace;
 use Nette\PhpGenerator\PromotedParameter;
 use Nette\PhpGenerator\Type;
 use Nette\Utils\Validators;
+use Shanginn\TelegramBotApiBindings\Types\Update;
 use TgScraper\TgScraper;
 
 /**
@@ -291,9 +292,11 @@ class StubCreator
         $apiInterfaceFile = new PhpFile();
 
         $phpNamespace = $file->addNamespace($this->namespace);
+        $phpNamespace->addUse('React\Promise\PromiseInterface');
         $apiClass = $phpNamespace->addClass('TelegramBotApi');
 
         $apiInterfaceNamespace = $apiInterfaceFile->addNamespace($this->namespace);
+        $apiInterfaceNamespace->addUse('React\Promise\PromiseInterface');
         $apiInterface = $apiInterfaceNamespace->addInterface('TelegramBotApiInterface');
 
         $apiClass->addImplement($this->namespace . '\\' . $apiInterface->getName());
@@ -323,19 +326,21 @@ class StubCreator
             ->setType(Type::Array);
 
         $doRequestMethod
-            ->setReturnType(Type::Mixed);
+            ->setReturnType('React\Promise\PromiseInterface');
 
         $doRequestMethod
             ->addBody(
                 <<<'BODY'
                     
-                    return $this->client->deserialize(
-                        $this->client->sendRequest(
+                    return $this->client
+                        ->sendRequest(
                             $method,
                             $this->client->serialize($args)
-                        ),
-                        $returnTypes
-                    );
+                        )
+                        ->then(fn ($response) => $this->client->deserialize(
+                            $response,
+                            $returnTypes
+                        ));
                     BODY
             );
 
@@ -440,12 +445,20 @@ class StubCreator
 );
 ');
 
+            $returnComment = sprintf(
+                '@return PromiseInterface<%s>',
+                str_replace('@param ', '', $returnComment)
+            );
+
+            // React\Promise\PromiseInterface<@return array<Update>>
+            // should be @return React\Promise\PromiseInterface<array<Update>>
+
             $function
-                ->setReturnType($returnTypes)
+                ->setReturnType('React\Promise\PromiseInterface')
                 ->addComment(str_replace('param', 'return', $returnComment));
 
             $interfaceFunction
-                ->setReturnType($returnTypes)
+                ->setReturnType('React\Promise\PromiseInterface')
                 ->addComment(str_replace('param', 'return', $returnComment));
         }
 
