@@ -6,10 +6,7 @@
 
 namespace TgScraper\Common;
 
-use Illuminate\Support\Str;
 use Nette\PhpGenerator\Helpers;
-use Nette\PhpGenerator\Method;
-use Nette\PhpGenerator\Parameter;
 use Nette\PhpGenerator\PhpFile;
 use Nette\PhpGenerator\PhpNamespace;
 use Nette\PhpGenerator\PromotedParameter;
@@ -108,11 +105,13 @@ class StubCreator
         ];
     }
 
-    private function parseApiFieldTypes(array $apiTypes, PhpNamespace $phpNamespace): array
-    {
+    private function parseApiFieldTypes(
+        array $apiTypes,
+        PhpNamespace $phpNamespace,
+        PhpNamespace $interfaceNamespace
+    ): array {
         $types = [];
         $comments = [];
-        $expectedReturnTypes = [];
 
         foreach ($apiTypes as $apiType) {
             if (str_starts_with($apiType, 'Array')) {
@@ -131,6 +130,9 @@ class StubCreator
                     if (ucfirst($subType) == $subType) {
                         $subType = $this->namespace . '\\Types\\' . $subType;
                         $phpNamespace->addUse($subType);
+                        if ($interfaceNamespace !== null) {
+                            $interfaceNamespace->addUse($subType);
+                        }
                     }
                 }
 
@@ -142,6 +144,10 @@ class StubCreator
             if (ucfirst($apiType) == $apiType) {
                 $apiType = $this->namespace . '\\Types\\' . $apiType;
                 $phpNamespace->addUse($apiType);
+
+                if ($interfaceNamespace !== null) {
+                    $interfaceNamespace->addUse($apiType);
+                }
             }
 
             $types[] = $apiType;
@@ -163,13 +169,7 @@ class StubCreator
         $interfaceFile = new PhpFile();
 
         $interfaceNamespace = $interfaceFile->addNamespace($namespace);
-        $interfaceNamespace
-            ->addInterface('TypeInterface')
-            ->addMethod('fromResponseResult')
-            ->setStatic()
-            ->setReturnType('self')
-            ->addParameter('result')
-            ->setType(Type::Array);
+        $interfaceNamespace->addInterface('TypeInterface');
 
         $responseFile = new PhpFile();
         $responseNamespace = $responseFile->addNamespace($namespace);
@@ -272,129 +272,31 @@ class StubCreator
             $constructor->setParameters(array_map(fn ($a) => $a[0], $params));
             $constructor->setComment(implode("\n", array_map(fn ($a) => $a[1], $params)));
 
-            $fromResponseResultMethod = $this->generateFromArrayMethod(
-                array_map(fn ($a) => $a[0], $params)
-            );
-
-            $typeClass->setMethods(array_merge(
-                $typeClass->getMethods(),
-                [$fromResponseResultMethod->getName() => $fromResponseResultMethod],
-            ));
-
             $types[$type['name']] = $file;
         }
 
         return $types;
     }
 
-    private function generateFromArrayMethod(array $params): Method
-    {
-        $fromResponseResultMethod = new Method('fromResponseResult');
-        $fromResponseResultMethod->setStatic()->setPublic();
-        $fromResponseResultMethod->setReturnType('self');
-        $fromResponseResultMethod
-            ->addParameter('result')
-            ->setType(Type::Array);
-
-        if (count($params) === 0) {
-            $fromResponseResultMethod->addBody('return new self();');
-
-            return $fromResponseResultMethod;
-        }
-
-        $requiredParams = array_filter($params, fn ($param) => !$param->hasDefaultValue());
-
-        $fromResponseResultMethod->addBody('$requiredFields = [');
-        foreach ($requiredParams as $param) {
-            $fromResponseResultMethod->addBody(sprintf(
-                '    \'%s\',',
-                Str::snake($param->getName())
-            ));
-        }
-
-        $fromResponseResultMethod->addBody("];\n");
-
-        $fromResponseResultMethod->addBody(
-            <<<'RequiredCheck'
-            $missingFields = [];
-
-            foreach ($requiredFields as $field) {
-                if (!isset($result[$field])) {
-                    $missingFields[] = $field;
-                }
-            }
-
-            if (count($missingFields) > 0) {
-                throw new \InvalidArgumentException(sprintf(
-                    'Class %s missing some fields from the result array: %s',
-                    static::class,
-                    implode(', ', $missingFields),
-                ));
-            }
-
-            RequiredCheck
-        );
-
-        $fromResponseResultMethod->addBody('return new self(');
-
-        /** @var Parameter $param */
-        foreach ($params as $param) {
-            if ($param->hasDefaultValue()) {
-                $defaultValue = $param->getDefaultValue();
-                if (is_string($defaultValue)) {
-                    $defaultValue = sprintf('\'%s\'', $defaultValue);
-                } elseif (is_bool($defaultValue)) {
-                    $defaultValue = sprintf('%s', $defaultValue ? 'true' : 'false');
-                } elseif (is_null($defaultValue)) {
-                    $defaultValue = 'null';
-                } else {
-                    $defaultValue = null;
-                }
-            } else {
-                $defaultValue = null;
-            }
-
-            $value = sprintf('$result[\'%s\']', Str::snake($param->getName()));
-
-            if (!Validators::isBuiltinType($param->getType())) {
-                if ($defaultValue !== null) {
-                    $value = <<<VALUE
-                    ($value ?? null) !== null
-                            ? \\{$param->getType()}::fromResponseResult($value)
-                            : null
-                    VALUE;
-
-                    $defaultValue = null;
-                } else {
-                    $value = "\\{$param->getType()}::fromResponseResult($value)";
-                }
-            }
-
-            $fromResponseResultMethod->addBody(sprintf(
-                '    %s: %s%s,',
-                $param->getName(),
-                $value,
-                $defaultValue !== null ? sprintf(' ?? %s', $defaultValue) : ''
-            ));
-        }
-
-        $fromResponseResultMethod->addBody(');');
-
-        return $fromResponseResultMethod;
-    }
-
     /**
-     * @return array{api: PhpFile, clientInterface: PhpFile}
+     * @return array{
+     *     api: PhpFile,
+     *     apiInterface: PhpFile,
+     *     clientInterface: PhpFile
+     * }
      */
     private function generateApi(): array
     {
         $file = new PhpFile();
-
-        $file->addComment('@noinspection PhpUnused');
-        $file->addComment('@noinspection PhpUnusedParameterInspection');
+        $apiInterfaceFile = new PhpFile();
 
         $phpNamespace = $file->addNamespace($this->namespace);
         $apiClass = $phpNamespace->addClass('TelegramBotApi');
+
+        $apiInterfaceNamespace = $apiInterfaceFile->addNamespace($this->namespace);
+        $apiInterface = $apiInterfaceNamespace->addInterface('TelegramBotApiInterface');
+
+        $apiClass->addImplement($this->namespace . '\\' . $apiInterface->getName());
 
         [$clientInterfaceFile, $clientInterface] = $this->generateTelegramBotApiClientInterface();
 
@@ -404,8 +306,46 @@ class StubCreator
             ->setType($this->namespace . '\\' . $clientInterface->getName())
             ->setVisibility('protected');
 
+        $doRequestMethod = $apiClass
+            ->addMethod('doRequest')
+            ->setPrivate();
+
+        $doRequestMethod
+            ->addParameter('method')
+            ->setType(Type::String);
+
+        $doRequestMethod
+            ->addParameter('args')
+            ->setType(Type::Array);
+
+        $doRequestMethod
+            ->addParameter('returnTypes')
+            ->setType(Type::Array);
+
+        $doRequestMethod
+            ->setReturnType(Type::Mixed);
+
+        $doRequestMethod
+            ->addBody(
+                <<<'BODY'
+                    
+                    return $this->client->deserialize(
+                        $this->client->sendRequest(
+                            $method,
+                            $this->client->serialize($args)
+                        ),
+                        $returnTypes
+                    );
+                    BODY
+            );
+
         foreach ($this->schema['methods'] as $method) {
             $function = $apiClass
+                ->addMethod($method['name'])
+                ->setPublic()
+                ->addComment($method['description']);
+
+            $interfaceFunction = $apiInterface
                 ->addMethod($method['name'])
                 ->setPublic()
                 ->addComment($method['description']);
@@ -422,22 +362,30 @@ class StubCreator
                 [
                     'types' => $types,
                     'comments' => $comment
-                ] = $this->parseApiFieldTypes($field['types'], $phpNamespace);
+                ] = $this->parseApiFieldTypes($field['types'], $phpNamespace, $apiInterfaceNamespace);
 
                 $fieldName = self::toCamelCase($field['name']);
                 $parameter = $function
                     ->addParameter($fieldName)
                     ->setType($types);
 
+                $interfaceParam = $interfaceFunction
+                    ->addParameter($fieldName)
+                    ->setType($types);
+
                 $default = $field['default'] ?? null;
                 if (!empty($default) and (!is_string($default) or lcfirst($default) == $default)) {
                     $parameter->setDefaultValue($default);
+                    $interfaceParam->setDefaultValue($default);
                 }
 
                 if ($field['optional']) {
                     $parameter->setNullable();
+                    $interfaceParam->setNullable();
+
                     if (!$parameter->hasDefaultValue()) {
                         $parameter->setDefaultValue(null);
+                        $interfaceParam->setDefaultValue(null);
                     }
 
                     $comment .= '|null';
@@ -445,12 +393,13 @@ class StubCreator
 
                 $comment .= sprintf(' $%s %s', $fieldName, $field['description']);
                 $function->addComment($comment);
+                $interfaceFunction->addComment($comment);
             }
 
             [
                 'types' => $returnTypes,
                 'comments' => $returnComment
-            ] = $this->parseApiFieldTypes($method['return_types'], $phpNamespace);
+            ] = $this->parseApiFieldTypes($method['return_types'], $phpNamespace, $apiInterfaceNamespace);
 
             $expectedReturnTypes = array_map(
                 function (string $type) {
@@ -484,24 +433,27 @@ class StubCreator
             );
 
             $function
-                ->addBody('$args = get_defined_vars();')
-                ->addBody('$returnTypes = ["' . implode('", "', $expectedReturnTypes) . '"];')
-                ->addBody(
-                    <<<'BODY'
-                    
-                    return $this->client->convertResponseToType(
-                        $this->client->sendRequest(__FUNCTION__, $args),
-                        $returnTypes
-                    );
-                    BODY
-                );
+                ->addBody('return $this->doRequest(
+    __FUNCTION__,
+    get_defined_vars(),
+    ["' . implode('", "', $expectedReturnTypes) . '"]
+);
+');
 
             $function
                 ->setReturnType($returnTypes)
                 ->addComment(str_replace('param', 'return', $returnComment));
+
+            $interfaceFunction
+                ->setReturnType($returnTypes)
+                ->addComment(str_replace('param', 'return', $returnComment));
         }
 
-        return ['api' => $file, 'clientInterface' => $clientInterfaceFile];
+        return [
+            'api' => $file,
+            'apiInterface' => $apiInterfaceFile,
+            'clientInterface' => $clientInterfaceFile,
+        ];
     }
 
     /**
@@ -517,33 +469,43 @@ class StubCreator
         $interface = $phpNamespace->addInterface('TelegramBotApiClientInterface');
 
         $method = $interface->addMethod('sendRequest')->setPublic();
+
         $method->addParameter('method')->setType(Type::String);
-        $method->addParameter('args')->setType(Type::Array);
+        $method->addParameter('json')->setType(Type::String);
         $method->setReturnType(Type::Mixed);
 
-        $method = $interface->addMethod('convertResponseToType')->setPublic();
-        $method->addParameter('response')->setType(Type::Mixed);
-        $method->addParameter('returnTypes')->setType(Type::Array);
-        $method->setReturnType(
-            sprintf('%s\\Types\\TypeInterface|array|int|string|bool', $this->namespace)
-        );
-        $method->addComment('@param mixed $response');
-        $method->addComment('@param array<string> $returnTypes');
-        $method->addComment('@return TypeInterface|array<TypeInterface>|bool|string|int');
+        $method = $interface->addMethod('serialize')->setPublic();
+        $method->addParameter('data')->setType(Type::Mixed);
+        $method->setReturnType(Type::String);
+
+        $method = $interface->addMethod('deserialize')->setPublic();
+        $method->addParameter('data')->setType(Type::String);
+        $method->addParameter('types')->setType(Type::Array);
+        $method->setReturnType(Type::Mixed);
 
         return [$file, $interface];
     }
 
     /**
-     * @return array{types: PhpFile[], api: PhpFile, clientInterface: PhpFile}
+     * @return array{
+     *     types: PhpFile[],
+     *     api: PhpFile,
+     *     apiInterface: PhpFile,
+     *     clientInterface: PhpFile
+     * }
      */
     public function generateCode(): array
     {
-        ['api' => $apiFile, 'clientInterface' => $clientInterface] = $this->generateApi();
+        [
+            'api' => $apiFile,
+            'clientInterface' => $clientInterface,
+            'apiInterface' => $apiInterface,
+        ] = $this->generateApi();
 
         return [
             'types' => $this->generateTypes(),
             'api' => $apiFile,
+            'apiInterface' => $apiInterface,
             'clientInterface' => $clientInterface,
         ];
     }

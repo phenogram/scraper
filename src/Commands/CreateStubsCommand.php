@@ -95,8 +95,11 @@ class CreateStubsCommand extends Command
         try {
             $output->writeln('Creating stubs...');
             $generator->toStubs($input->getArgument('destination'), $input->getOption('namespace-prefix'));
-        } catch (\Exception) {
-            $logger->critical('Could not create stubs.');
+        } catch (\Exception $e) {
+            $logger->critical(sprintf(
+                'Could not create stubs. %s',
+                $e->getMessage(),
+            ));
 
             return Command::FAILURE;
         }

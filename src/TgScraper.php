@@ -119,6 +119,7 @@ class TgScraper
         [
             'types' => $types,
             'api' => $api,
+            'apiInterface' => $apiInterface,
             'clientInterface' => $clientInterface,
         ] = $creator->generateCode();
 
@@ -136,6 +137,11 @@ class TgScraper
         file_put_contents(
             $directory . '/' . array_values($api->getClasses())[0]->getName() . '.php',
             $api
+        );
+
+        file_put_contents(
+            $directory . '/' . array_values($apiInterface->getClasses())[0]->getName() . '.php',
+            $apiInterface
         );
     }
 
