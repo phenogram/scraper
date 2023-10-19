@@ -7,12 +7,12 @@
 namespace TgScraper\Common;
 
 use Nette\PhpGenerator\Helpers;
+use Nette\PhpGenerator\InterfaceType;
 use Nette\PhpGenerator\PhpFile;
 use Nette\PhpGenerator\PhpNamespace;
 use Nette\PhpGenerator\PromotedParameter;
 use Nette\PhpGenerator\Type;
 use Nette\Utils\Validators;
-use Shanginn\TelegramBotApiBindings\Types\Update;
 use TgScraper\TgScraper;
 
 /**
@@ -280,11 +280,7 @@ class StubCreator
     }
 
     /**
-     * @return array{
-     *     api: PhpFile,
-     *     apiInterface: PhpFile,
-     *     clientInterface: PhpFile
-     * }
+     * @return array<string,PhpFile>
      */
     private function generateApi(): array
     {
@@ -302,11 +298,17 @@ class StubCreator
         $apiClass->addImplement($this->namespace . '\\' . $apiInterface->getName());
 
         [$clientInterfaceFile, $clientInterface] = $this->generateTelegramBotApiClientInterface();
+        [$serializerInterfaceFile, $serializerInterface] = $this->generateTelegramBotApiSerializerInterface();
 
         $constructor = $apiClass->addMethod('__construct');
         $constructor
             ->addPromotedParameter('client')
             ->setType($this->namespace . '\\' . $clientInterface->getName())
+            ->setVisibility('protected');
+
+        $constructor
+            ->addPromotedParameter('serializer')
+            ->setType($this->namespace . '\\' . $serializerInterface->getName())
             ->setVisibility('protected');
 
         $doRequestMethod = $apiClass
@@ -335,9 +337,9 @@ class StubCreator
                     return $this->client
                         ->sendRequest(
                             $method,
-                            $this->client->serialize($args)
+                            $this->serializer->serialize($args)
                         )
-                        ->then(fn ($response) => $this->client->deserialize(
+                        ->then(fn ($response) => $this->serializer->deserialize(
                             $response,
                             $returnTypes
                         ));
@@ -450,9 +452,6 @@ class StubCreator
                 str_replace('@param ', '', $returnComment)
             );
 
-            // React\Promise\PromiseInterface<@return array<Update>>
-            // should be @return React\Promise\PromiseInterface<array<Update>>
-
             $function
                 ->setReturnType('React\Promise\PromiseInterface')
                 ->addComment(str_replace('param', 'return', $returnComment));
@@ -463,9 +462,10 @@ class StubCreator
         }
 
         return [
-            'api' => $file,
-            'apiInterface' => $apiInterfaceFile,
-            'clientInterface' => $clientInterfaceFile,
+            'TelegramBotApi' => $file,
+            'TelegramBotApiInterface' => $apiInterfaceFile,
+            'TelegramBotApiClientInterface' => $clientInterfaceFile,
+            'TelegramBotApiSerializerInterface' => $serializerInterfaceFile,
         ];
     }
 
@@ -487,6 +487,20 @@ class StubCreator
         $method->addParameter('json')->setType(Type::String);
         $method->setReturnType('React\Promise\PromiseInterface');
 
+        return [$file, $interface];
+    }
+
+    /**
+     * @return array{0: PhpFile, 1: InterfaceType}
+     */
+    private function generateTelegramBotApiSerializerInterface(): array
+    {
+        $file = new PhpFile();
+
+        $phpNamespace = $file->addNamespace($this->namespace);
+
+        $interface = $phpNamespace->addInterface('TelegramBotApiSerializerInterface');
+
         $method = $interface->addMethod('serialize')->setPublic();
         $method->addParameter('data')->setType(Type::Mixed);
         $method->setReturnType(Type::String);
@@ -502,24 +516,14 @@ class StubCreator
     /**
      * @return array{
      *     types: PhpFile[],
-     *     api: PhpFile,
-     *     apiInterface: PhpFile,
-     *     clientInterface: PhpFile
+     *     files: array<string,PhpFile>,
      * }
      */
     public function generateCode(): array
     {
-        [
-            'api' => $apiFile,
-            'clientInterface' => $clientInterface,
-            'apiInterface' => $apiInterface,
-        ] = $this->generateApi();
-
         return [
             'types' => $this->generateTypes(),
-            'api' => $apiFile,
-            'apiInterface' => $apiInterface,
-            'clientInterface' => $clientInterface,
+            'files' => $this->generateApi(),
         ];
     }
 }

@@ -118,9 +118,7 @@ class TgScraper
 
         [
             'types' => $types,
-            'api' => $api,
-            'apiInterface' => $apiInterface,
-            'clientInterface' => $clientInterface,
+            'files' => $files,
         ] = $creator->generateCode();
 
         foreach ($types as $className => $type) {
@@ -129,20 +127,12 @@ class TgScraper
             file_put_contents($filename, $type);
         }
 
-        file_put_contents(
-            $directory . '/' . array_values($clientInterface->getClasses())[0]->getName() . '.php',
-            (string) $clientInterface
-        );
+        foreach ($files as $filePath => $file) {
+            $this->logger->info('Generating file: ' . $filePath);
+            $filename = sprintf('%s/%s.php', $directory, $filePath);
 
-        file_put_contents(
-            $directory . '/' . array_values($api->getClasses())[0]->getName() . '.php',
-            $api
-        );
-
-        file_put_contents(
-            $directory . '/' . array_values($apiInterface->getClasses())[0]->getName() . '.php',
-            $apiInterface
-        );
+            file_put_contents($filename, $file);
+        }
     }
 
     /**
