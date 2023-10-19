@@ -6,13 +6,21 @@
 
 namespace TgScraper\Common;
 
+use Illuminate\Support\Str;
+use Nette\PhpGenerator\ClassType;
 use Nette\PhpGenerator\Helpers;
 use Nette\PhpGenerator\InterfaceType;
+use Nette\PhpGenerator\Method;
+use Nette\PhpGenerator\Parameter;
 use Nette\PhpGenerator\PhpFile;
 use Nette\PhpGenerator\PhpNamespace;
 use Nette\PhpGenerator\PromotedParameter;
 use Nette\PhpGenerator\Type;
 use Nette\Utils\Validators;
+use Shanginn\TelegramBotApiBindings\TelegramBotApiSerializerInterface;
+use Shanginn\TelegramBotApiBindings\Types\BotCommandScope;
+use Shanginn\TelegramBotApiBindings\Types\Message;
+use Shanginn\TelegramBotApiBindings\Types\TypeInterface;
 use TgScraper\TgScraper;
 
 /**
@@ -208,12 +216,14 @@ class StubCreator
     }
 
     /**
-     * @return PhpFile[]
+     * @return array{0: PhpFile[], 1: array<string,Method>}
      */
     private function generateTypes(): array
     {
         $namespace = $this->namespace . '\\Types';
         $types = $this->generateDefaultTypes($namespace);
+
+        $denormalizers = [];
 
         foreach ($this->schema['types'] as $type) {
             $file = new PhpFile();
@@ -273,16 +283,23 @@ class StubCreator
             $constructor->setParameters(array_map(fn ($a) => $a[0], $params));
             $constructor->setComment(implode("\n", array_map(fn ($a) => $a[1], $params)));
 
+            $denormalizers[$type['name']] = $this->generateDeserializeTypeMethod(
+                array_map(fn ($a) => $a[0], $params),
+                $type['name']
+            );
+
             $types[$type['name']] = $file;
         }
 
-        return $types;
+        return [$types, $denormalizers];
     }
 
     /**
+     * @param array<string,Method> $denormalizers
+     *
      * @return array<string,PhpFile>
      */
-    private function generateApi(): array
+    private function generateApi(array $denormalizers): array
     {
         $file = new PhpFile();
         $apiInterfaceFile = new PhpFile();
@@ -299,6 +316,7 @@ class StubCreator
 
         [$clientInterfaceFile, $clientInterface] = $this->generateTelegramBotApiClientInterface();
         [$serializerInterfaceFile, $serializerInterface] = $this->generateTelegramBotApiSerializerInterface();
+        [$serializerFile, $serializer] = $this->generateTelegramBotApiSerializer($denormalizers);
 
         $constructor = $apiClass->addMethod('__construct');
         $constructor
@@ -466,11 +484,115 @@ class StubCreator
             'TelegramBotApiInterface' => $apiInterfaceFile,
             'TelegramBotApiClientInterface' => $clientInterfaceFile,
             'TelegramBotApiSerializerInterface' => $serializerInterfaceFile,
+            'TelegramBotApiSerializer' => $serializerFile,
         ];
     }
 
+    private function generateDeserializeTypeMethod(array $params, string $type): Method
+    {
+        $fromResponseResultMethod = new Method(sprintf('denormalize%s', $type));
+        $fromResponseResultMethod->setPublic();
+        $fromResponseResultMethod->setReturnType($this->namespace . '\\Types\\' . $type);
+        $fromResponseResultMethod
+            ->addParameter('data')
+            ->setType(Type::Array);
+
+        if (count($params) === 0) {
+            $fromResponseResultMethod->addBody(sprintf('return new %s();', $type));
+
+            return $fromResponseResultMethod;
+        }
+
+        $requiredParams = array_filter($params, fn ($param) => !$param->hasDefaultValue());
+
+        $fromResponseResultMethod->addBody('$requiredFields = [');
+        foreach ($requiredParams as $param) {
+            $fromResponseResultMethod->addBody(sprintf(
+                '    \'%s\',',
+                Str::snake($param->getName())
+            ));
+        }
+
+        $fromResponseResultMethod->addBody("];\n");
+
+        $fromResponseResultMethod->addBody(
+            <<<'RequiredCheck'
+            $missingFields = [];
+
+            foreach ($requiredFields as $field) {
+                if (!isset($result[$field])) {
+                    $missingFields[] = $field;
+                }
+            }
+
+            if (count($missingFields) > 0) {
+                throw new \InvalidArgumentException(sprintf(
+                    'Class %s missing some fields from the result array: %s',
+                    static::class,
+                    implode(', ', $missingFields),
+                ));
+            }
+
+            RequiredCheck
+        );
+
+        $fromResponseResultMethod->addBody(sprintf('return new %s(', $type));
+
+        /** @var Parameter $param */
+        foreach ($params as $param) {
+            if ($param->hasDefaultValue()) {
+                $defaultValue = $param->getDefaultValue();
+                if (is_string($defaultValue)) {
+                    $defaultValue = sprintf('\'%s\'', $defaultValue);
+                } elseif (is_bool($defaultValue)) {
+                    $defaultValue = sprintf('%s', $defaultValue ? 'true' : 'false');
+                } elseif (is_null($defaultValue)) {
+                    $defaultValue = 'null';
+                } else {
+                    $defaultValue = null;
+                }
+            } else {
+                $defaultValue = null;
+            }
+
+            $value = sprintf('$data[\'%s\']', Str::snake($param->getName()));
+
+            if (!Validators::isBuiltinType($paramType = $param->getType())) {
+                $paramTypeBase = explode('\\', $paramType);
+                $paramTypeBase = $paramTypeBase[count($paramTypeBase) - 1];
+
+                if ($defaultValue !== null) {
+                    $value = <<<VALUE
+                    ($value ?? null) !== null
+                            ? \$this->denormalize{$paramTypeBase}($value)
+                            : null
+                    VALUE;
+
+                    $defaultValue = null;
+                } else {
+                    $value = sprintf(
+                        '$this->denormalize%s($data[\'%s\'])',
+                        $paramTypeBase,
+                        Str::snake($param->getName())
+                    );
+                }
+            }
+
+            $fromResponseResultMethod->addBody(sprintf(
+                '    %s: %s%s,',
+                $param->getName(),
+                $value,
+                $defaultValue !== null ? sprintf(' ?? %s', $defaultValue) : ''
+            ));
+        }
+
+        $fromResponseResultMethod->addBody(');');
+
+        return $fromResponseResultMethod;
+    }
+
     /**
-     * @return array{0: PhpFile, 1: PhpNamespace}
+     * @return array{0: PhpFile, 1: InterfaceType}
      */
     private function generateTelegramBotApiClientInterface(): array
     {
@@ -502,7 +624,7 @@ class StubCreator
         $interface = $phpNamespace->addInterface('TelegramBotApiSerializerInterface');
 
         $method = $interface->addMethod('serialize')->setPublic();
-        $method->addParameter('data')->setType(Type::Mixed);
+        $method->addParameter('data')->setType(Type::Array);
         $method->setReturnType(Type::String);
 
         $method = $interface->addMethod('deserialize')->setPublic();
@@ -514,6 +636,174 @@ class StubCreator
     }
 
     /**
+     * @param array<string, Method> $denormalizers
+     *
+     * @return array{0: PhpFile, 1: ClassType}
+     */
+    private function generateTelegramBotApiSerializer(array $denormalizers): array
+    {
+        $file = new PhpFile();
+
+        $phpNamespace = $file->addNamespace($this->namespace);
+        $phpNamespace->addUse($this->namespace . '\\Types\\TypeInterface');
+
+        $class = $phpNamespace->addClass('TelegramBotApiSerializer');
+        $class->addImplement($this->namespace . '\\TelegramBotApiSerializerInterface');
+
+        $serializeMethod = $class->addMethod('serialize');
+        $serializeMethod->addParameter('data')->setType(Type::Array);
+        $serializeMethod->setReturnType(Type::String);
+        $serializeMethod->setPublic();
+
+        // namespace Shanginn\TelegramBotApiBindings;
+        //
+        // use Shanginn\TelegramBotApiBindings\Types\BotCommandScope;
+        // use Shanginn\TelegramBotApiBindings\Types\Message;
+        // use Shanginn\TelegramBotApiBindings\Types\TypeInterface;
+        //
+        // class TelegramBotApiSerializer implements TelegramBotApiSerializerInterface
+        // {
+        //    public function serialize(array $data): string
+        //    {
+        //        return json_encode($this->normalize($data));
+        //    }
+        //
+        //    public function deserialize(string $data, array $types): mixed
+        //    {
+        //        $response = json_decode($data, true);
+        //
+        //        foreach ($types as $type) {
+        //            if (class_exists($type) && is_subclass_of($type, TypeInterface::class)) {
+        //                return $this->denormalizeType($response, $type);
+        //            } elseif ($type === 'bool') {
+        //                return (bool) $response;
+        //            } elseif ($type === 'int') {
+        //                return (int) $response;
+        //            } elseif ($type === 'string') {
+        //                return (string) $response;
+        //            } elseif (str_starts_with($type, 'array<')) {
+        //                preg_match('/array<(.+)>/', $type, $matches);
+        //                $innerType = $matches[1];
+        //                $resultArray = [];
+        //
+        //                foreach ($response as $item) {
+        //                    $resultArray[] = $this->deserialize($item, [$innerType]);
+        //                }
+        //
+        //                return $resultArray;
+        //            }
+        //        }
+        //
+        //        throw new \UnexpectedValueException(sprintf('Failed to decode response to any of the expected types: %s', implode(', ', $types)));
+        //    }
+        //
+        //    private function denormalizeType(string $data, string $type): TypeInterface
+        //    {
+        //        return match ($type) {
+        //            Message::class => $this->denormalizeMessage($data),
+        //            BotCommandScope::class => $this->denormalizeBotCommandScope($data),
+        //            ...
+        //        }
+        //    }
+        //
+        //    private function normalize(array $data): array
+        //    {
+        //        $result = [];
+        //
+        //        foreach ($data as $key => $value) {
+        //            if (is_null($value)) {
+        //                continue;
+        //            }
+        //
+        //            $snakeKey = $this->camelToSnake($key);
+        //
+        //            if ($value instanceof TypeInterface) {
+        //                $value = get_object_vars($value);
+        //            }
+        //
+        //            if (is_array($value)) {
+        //                $result[$snakeKey] = json_encode($this->normalize($value));
+        //            } else {
+        //                $result[$snakeKey] = $value;
+        //            }
+        //        }
+        //
+        //        return $result;
+        //    }
+        //
+        //    private function camelToSnake(string $input): string
+        //    {
+        //        return strtolower(preg_replace('/[A-Z]/', '_$0', lcfirst($input)));
+        //    }
+        // }
+
+        $serializeMethod->setBody('return json_encode($this->normalize($data));');
+
+        $deserializeMethod = $class->addMethod('deserialize');
+        $deserializeMethod->addParameter('data')->setType('string');
+        $deserializeMethod->addParameter('types')->setType('array');
+        $deserializeMethod->setReturnType('mixed');
+        $deserializeMethod->setPublic();
+        $deserializeMethod->setBody('
+        $response = json_decode($data, true);
+    ');
+
+        $denormalizeTypeMethod = $class->addMethod('denormalizeType');
+        $denormalizeTypeMethod->addParameter('data')->setType(Type::Array);
+        $denormalizeTypeMethod->addParameter('type')->setType(Type::String);
+        $denormalizeTypeMethod->setReturnType($this->namespace . '\\Types\\TypeInterface');
+        $denormalizeTypeMethod->setPrivate();
+        $denormalizeTypeMethod->addBody('
+        return match ($type) {
+    ');
+
+        foreach ($denormalizers as $type => $denormalizer) {
+            if (in_array($type, $this->abstractClasses)) {
+                // TODO:
+                continue;
+            }
+
+            $denormalizeTypeMethod->addBody(sprintf(
+                '        %s::class => $this->denormalize%s($data),',
+                $type,
+                $type
+            ));
+
+            $phpNamespace->addUse($this->namespace . '\\Types\\' . $type);
+        }
+
+        $denormalizeTypeMethod->addBody(
+            '        default => throw new \InvalidArgumentException(sprintf(\'Unknown type %s\', $type)),
+    };
+');
+
+        $class->setMethods(
+            array_merge(
+                array_values($denormalizers),
+                $class->getMethods()
+            )
+        );
+
+        $normalizeMethod = $class->addMethod('normalize');
+        $normalizeMethod->addParameter('data')->setType('array');
+        $normalizeMethod->setReturnType('array');
+        $normalizeMethod->setPrivate();
+        $normalizeMethod->setBody('
+            $result = [];
+        ');
+
+        $camelToSnakeMethod = $class->addMethod('camelToSnake');
+        $camelToSnakeMethod->addParameter('input')->setType('string');
+        $camelToSnakeMethod->setReturnType('string');
+        $camelToSnakeMethod->setPrivate();
+        $camelToSnakeMethod->setBody('
+            return strtolower(preg_replace(\'/[A-Z]/\', \'_$0\', lcfirst($input)));
+        ');
+
+        return [$file, $class];
+    }
+
+    /**
      * @return array{
      *     types: PhpFile[],
      *     files: array<string,PhpFile>,
@@ -521,9 +811,11 @@ class StubCreator
      */
     public function generateCode(): array
     {
+        [$types, $typesDenormalizers] = $this->generateTypes();
+
         return [
-            'types' => $this->generateTypes(),
-            'files' => $this->generateApi(),
+            'types' => $types,
+            'files' => $this->generateApi($typesDenormalizers),
         ];
     }
 }
