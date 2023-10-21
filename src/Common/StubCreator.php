@@ -17,9 +17,6 @@ use Nette\PhpGenerator\PhpNamespace;
 use Nette\PhpGenerator\PromotedParameter;
 use Nette\PhpGenerator\Type;
 use Nette\Utils\Validators;
-use Shanginn\TelegramBotApiBindings\TelegramBotApiSerializerInterface;
-use Shanginn\TelegramBotApiBindings\Types\BotCommandScope;
-use Shanginn\TelegramBotApiBindings\Types\Message;
 use Shanginn\TelegramBotApiBindings\Types\TypeInterface;
 use TgScraper\TgScraper;
 
@@ -497,7 +494,6 @@ class StubCreator
             ->addParameter('data')
             ->setType(Type::Array);
 
-        //  if (in_array($type['name'], $this->abstractClasses)) {
         if (in_array($type, $this->abstractClasses)) {
             $fromResponseResultMethod->addBody(
                 sprintf(
@@ -535,15 +531,18 @@ class StubCreator
             $missingFields = [];
 
             foreach ($requiredFields as $field) {
-                if (!isset($result[$field])) {
+                if (!isset($data[$field])) {
                     $missingFields[] = $field;
                 }
             }
 
             if (count($missingFields) > 0) {
                 throw new \InvalidArgumentException(sprintf(
-                    'Class %s missing some fields from the result array: %s',
-                    static::class,
+                    'Class 
+            RequiredCheck
+                    . $type .
+            <<<'RequiredCheck'
+             missing some fields from the data array: %s',
                     implode(', ', $missingFields),
                 ));
             }
@@ -673,40 +672,26 @@ class StubCreator
         $serializeMethod->addParameter('data')->setType(Type::Array);
         $serializeMethod->setReturnType(Type::String);
         $serializeMethod->setPublic();
+        $serializeMethod->setBody('return json_encode($this->normalize($data));');
 
-        // namespace Shanginn\TelegramBotApiBindings;
-        //
-        // use Shanginn\TelegramBotApiBindings\Types\BotCommandScope;
-        // use Shanginn\TelegramBotApiBindings\Types\Message;
-        // use Shanginn\TelegramBotApiBindings\Types\TypeInterface;
-        //
-        // class TelegramBotApiSerializer implements TelegramBotApiSerializerInterface
-        // {
-        //    public function serialize(array $data): string
+        // public function denormalize(array $data, array $types): mixed
         //    {
-        //        return json_encode($this->normalize($data));
-        //    }
-        //
-        //    public function deserialize(string $data, array $types): mixed
-        //    {
-        //        $response = json_decode($data, true);
-        //
         //        foreach ($types as $type) {
         //            if (class_exists($type) && is_subclass_of($type, TypeInterface::class)) {
-        //                return $this->denormalizeType($response, $type);
+        //                return $this->denormalizeType($data, $type);
         //            } elseif ($type === 'bool') {
-        //                return (bool) $response;
+        //                return (bool) $data;
         //            } elseif ($type === 'int') {
-        //                return (int) $response;
+        //                return (int) $data;
         //            } elseif ($type === 'string') {
-        //                return (string) $response;
+        //                return (string) $data;
         //            } elseif (str_starts_with($type, 'array<')) {
         //                preg_match('/array<(.+)>/', $type, $matches);
         //                $innerType = $matches[1];
         //                $resultArray = [];
         //
-        //                foreach ($response as $item) {
-        //                    $resultArray[] = $this->deserialize($item, [$innerType]);
+        //                foreach ($data as $item) {
+        //                    $resultArray[] = $this->denormalize($item, [$innerType]);
         //                }
         //
         //                return $resultArray;
@@ -716,40 +701,46 @@ class StubCreator
         //        throw new \UnexpectedValueException(sprintf('Failed to decode response to any of the expected types: %s', implode(', ', $types)));
         //    }
         //
-        //    private function denormalizeType(string $data, string $type): TypeInterface
+        //    public function deserialize(string $data, array $types): mixed
         //    {
-        //        return match ($type) {
-        //            Message::class => $this->denormalizeMessage($data),
-        //            BotCommandScope::class => $this->denormalizeBotCommandScope($data),
-        //            ...
-        //        }
-        //    }
+        //        $response = json_decode($data, true);
         //
+        //        return $this->denormalize($response, $types);
+        //    }
 
         $deserializeMethod = $class->addMethod('deserialize');
-        $deserializeMethod->addParameter('data')->setType('string');
-        $deserializeMethod->addParameter('types')->setType('array');
+        $deserializeMethod->addParameter('data')->setType(Type::String);
+        $deserializeMethod->addParameter('types')->setType(Type::Array);
         $deserializeMethod->setReturnType('mixed');
         $deserializeMethod->setPublic();
-        $deserializeMethod->setBody(<<<'BODY'
+        $deserializeMethod->setBody('
             $response = json_decode($data, true);
             
+            return $this->denormalize($response, $types);
+        ');
+
+        $denormalizeMethod = $class->addMethod('denormalize');
+        $denormalizeMethod->addParameter('data')->setType(Type::Array);
+        $denormalizeMethod->addParameter('types')->setType(Type::Array);
+        $denormalizeMethod->setReturnType('mixed');
+        $denormalizeMethod->setPublic();
+        $denormalizeMethod->setBody(<<<'BODY'
             foreach ($types as $type) {
                 if (class_exists($type) && is_subclass_of($type, TypeInterface::class)) {
-                    return $this->denormalizeType($response, $type);
+                    return $this->denormalizeType($data, $type);
                 } elseif ($type === 'bool') {
-                    return (bool) $response;
+                    return (bool) $data;
                 } elseif ($type === 'int') {
-                    return (int) $response;
+                    return (int) $data;
                 } elseif ($type === 'string') {
-                    return (string) $response;
+                    return (string) $data;
                 } elseif (str_starts_with($type, 'array<')) {
                     preg_match('/array<(.+)>/', $type, $matches);
                     $innerType = $matches[1];
                     $resultArray = [];
                     
-                    foreach ($response as $item) {
-                        $resultArray[] = $this->deserialize($item, [$innerType]);
+                    foreach ($data as $item) {
+                        $resultArray[] = $this->denormalize($item, [$innerType]);
                     }
                     
                     return $resultArray;
@@ -759,8 +750,6 @@ class StubCreator
             throw new \UnexpectedValueException(sprintf('Failed to decode response to any of the expected types: %s', implode(', ', $types)));
             BODY
         );
-
-        $serializeMethod->setBody('return json_encode($this->normalize($data));');
 
         $denormalizeTypeMethod = $class->addMethod('denormalizeType');
         $denormalizeTypeMethod->addParameter('data')->setType(Type::Array);
