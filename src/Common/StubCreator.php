@@ -283,12 +283,12 @@ class StubCreator
             $constructor->setParameters(array_map(fn ($a) => $a[0], $params));
             $constructor->setComment(implode("\n", array_map(fn ($a) => $a[1], $params)));
 
+            $types[$type['name']] = $file;
+
             $denormalizers[$type['name']] = $this->generateDeserializeTypeMethod(
                 array_map(fn ($a) => $a[0], $params),
                 $type['name']
             );
-
-            $types[$type['name']] = $file;
         }
 
         return [$types, $denormalizers];
@@ -497,26 +497,41 @@ class StubCreator
             ->addParameter('data')
             ->setType(Type::Array);
 
+        //  if (in_array($type['name'], $this->abstractClasses)) {
+        if (in_array($type, $this->abstractClasses)) {
+            $fromResponseResultMethod->addBody(
+                sprintf(
+                    'throw new \RuntimeException("class %s is abstract and not yet implemented");',
+                    $type
+                )
+            );
+
+            return $fromResponseResultMethod;
+        }
+
         if (count($params) === 0) {
-            $fromResponseResultMethod->addBody(sprintf('return new %s();', $type));
+            $fromResponseResultMethod->addBody(
+                sprintf('return new %s();', $type)
+            );
 
             return $fromResponseResultMethod;
         }
 
         $requiredParams = array_filter($params, fn ($param) => !$param->hasDefaultValue());
 
-        $fromResponseResultMethod->addBody('$requiredFields = [');
-        foreach ($requiredParams as $param) {
-            $fromResponseResultMethod->addBody(sprintf(
-                '    \'%s\',',
-                Str::snake($param->getName())
-            ));
-        }
+        if (count($requiredParams) > 0) {
+            $fromResponseResultMethod->addBody('$requiredFields = [');
+            foreach ($requiredParams as $param) {
+                $fromResponseResultMethod->addBody(sprintf(
+                    '    \'%s\',',
+                    Str::snake($param->getName())
+                ));
+            }
 
-        $fromResponseResultMethod->addBody("];\n");
+            $fromResponseResultMethod->addBody("];\n");
 
-        $fromResponseResultMethod->addBody(
-            <<<'RequiredCheck'
+            $fromResponseResultMethod->addBody(
+                <<<'RequiredCheck'
             $missingFields = [];
 
             foreach ($requiredFields as $field) {
@@ -534,7 +549,8 @@ class StubCreator
             }
 
             RequiredCheck
-        );
+            );
+        }
 
         $fromResponseResultMethod->addBody(sprintf('return new %s(', $type));
 
@@ -557,10 +573,13 @@ class StubCreator
 
             $value = sprintf('$data[\'%s\']', Str::snake($param->getName()));
 
-            if (!Validators::isBuiltinType($paramType = $param->getType())) {
-                $paramTypeBase = explode('\\', $paramType);
-                $paramTypeBase = $paramTypeBase[count($paramTypeBase) - 1];
+            $paramType = $param->getType();
+            $paramTypeBase = explode('\\', $paramType);
+            $paramTypeBase = $paramTypeBase[count($paramTypeBase) - 1];
+            $paramTypeBase = explode('|', $paramTypeBase);
+            $paramTypeBase = $paramTypeBase[0];
 
+            if (!Validators::isBuiltinType($paramTypeBase)) {
                 if ($defaultValue !== null) {
                     $value = <<<VALUE
                     ($value ?? null) !== null
@@ -706,47 +725,42 @@ class StubCreator
         //        }
         //    }
         //
-        //    private function normalize(array $data): array
-        //    {
-        //        $result = [];
-        //
-        //        foreach ($data as $key => $value) {
-        //            if (is_null($value)) {
-        //                continue;
-        //            }
-        //
-        //            $snakeKey = $this->camelToSnake($key);
-        //
-        //            if ($value instanceof TypeInterface) {
-        //                $value = get_object_vars($value);
-        //            }
-        //
-        //            if (is_array($value)) {
-        //                $result[$snakeKey] = json_encode($this->normalize($value));
-        //            } else {
-        //                $result[$snakeKey] = $value;
-        //            }
-        //        }
-        //
-        //        return $result;
-        //    }
-        //
-        //    private function camelToSnake(string $input): string
-        //    {
-        //        return strtolower(preg_replace('/[A-Z]/', '_$0', lcfirst($input)));
-        //    }
-        // }
-
-        $serializeMethod->setBody('return json_encode($this->normalize($data));');
 
         $deserializeMethod = $class->addMethod('deserialize');
         $deserializeMethod->addParameter('data')->setType('string');
         $deserializeMethod->addParameter('types')->setType('array');
         $deserializeMethod->setReturnType('mixed');
         $deserializeMethod->setPublic();
-        $deserializeMethod->setBody('
-        $response = json_decode($data, true);
-    ');
+        $deserializeMethod->setBody(<<<'BODY'
+            $response = json_decode($data, true);
+            
+            foreach ($types as $type) {
+                if (class_exists($type) && is_subclass_of($type, TypeInterface::class)) {
+                    return $this->denormalizeType($response, $type);
+                } elseif ($type === 'bool') {
+                    return (bool) $response;
+                } elseif ($type === 'int') {
+                    return (int) $response;
+                } elseif ($type === 'string') {
+                    return (string) $response;
+                } elseif (str_starts_with($type, 'array<')) {
+                    preg_match('/array<(.+)>/', $type, $matches);
+                    $innerType = $matches[1];
+                    $resultArray = [];
+                    
+                    foreach ($response as $item) {
+                        $resultArray[] = $this->deserialize($item, [$innerType]);
+                    }
+                    
+                    return $resultArray;
+                }
+            }
+            
+            throw new \UnexpectedValueException(sprintf('Failed to decode response to any of the expected types: %s', implode(', ', $types)));
+            BODY
+        );
+
+        $serializeMethod->setBody('return json_encode($this->normalize($data));');
 
         $denormalizeTypeMethod = $class->addMethod('denormalizeType');
         $denormalizeTypeMethod->addParameter('data')->setType(Type::Array);
@@ -790,6 +804,26 @@ class StubCreator
         $normalizeMethod->setPrivate();
         $normalizeMethod->setBody('
             $result = [];
+            
+            foreach ($data as $key => $value) {
+                if (is_null($value)) {
+                    continue;
+                }
+                
+                $snakeKey = $this->camelToSnake($key);
+                
+                if ($value instanceof TypeInterface) {
+                    $value = get_object_vars($value);
+                }
+                
+                if (is_array($value)) {
+                    $result[$snakeKey] = json_encode($this->normalize($value));
+                } else {
+                    $result[$snakeKey] = $value;
+                }
+            }
+            
+            return $result;
         ');
 
         $camelToSnakeMethod = $class->addMethod('camelToSnake');
