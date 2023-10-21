@@ -17,7 +17,6 @@ use Nette\PhpGenerator\PhpNamespace;
 use Nette\PhpGenerator\PromotedParameter;
 use Nette\PhpGenerator\Type;
 use Nette\Utils\Validators;
-use Shanginn\TelegramBotApiBindings\Types\TypeInterface;
 use TgScraper\TgScraper;
 
 /**
@@ -86,10 +85,24 @@ class StubCreator
     {
         $types = [];
         $comments = [];
+        $arrayType = null;
+
         foreach ($fieldTypes as $fieldType) {
             if (str_starts_with($fieldType, 'Array')) {
                 $types[] = 'array';
                 $comments[] = str_replace('Array', 'array', $fieldType);
+
+                $innerType = explode('<', $fieldType);
+
+                $arrayLevels = 0;
+                $innerType = $innerType[count($innerType) - 1];
+
+                while (str_ends_with($innerType, '>')) {
+                    ++$arrayLevels;
+                    $innerType = substr($innerType, 0, -1);
+                }
+
+                $arrayType = [$arrayLevels, $innerType];
 
                 continue;
             }
@@ -108,6 +121,7 @@ class StubCreator
         return [
             'types' => implode('|', $types),
             'comments' => $comments,
+            'arrayType' => $arrayType,
         ];
     }
 
@@ -244,11 +258,21 @@ class StubCreator
 
             $typeClass->setComment($type['description'] ?? null);
 
+            $arrayTypes = [];
+
             foreach ($type['fields'] as $field) {
-                ['types' => $fieldType, 'comments' => $fieldComment] = $this->parseFieldTypes(
+                [
+                    'types' => $fieldType,
+                    'comments' => $fieldComment,
+                    'arrayType' => $arrayType,
+                ] = $this->parseFieldTypes(
                     $field['types'],
                     $phpNamespace
                 );
+
+                if ($arrayType !== null) {
+                    $arrayTypes[$field['name']] = $arrayType;
+                }
 
                 $fieldName = self::toCamelCase($field['name']);
                 $param = (new PromotedParameter($fieldName))->setType($fieldType);
@@ -282,9 +306,10 @@ class StubCreator
 
             $types[$type['name']] = $file;
 
-            $denormalizers[$type['name']] = $this->generateDeserializeTypeMethod(
+            $denormalizers[$type['name']] = $this->generateDenormalizeTypeMethod(
                 array_map(fn ($a) => $a[0], $params),
-                $type['name']
+                $type['name'],
+                $arrayTypes
             );
         }
 
@@ -485,48 +510,54 @@ class StubCreator
         ];
     }
 
-    private function generateDeserializeTypeMethod(array $params, string $type): Method
-    {
-        $fromResponseResultMethod = new Method(sprintf('denormalize%s', $type));
-        $fromResponseResultMethod->setPublic();
-        $fromResponseResultMethod->setReturnType($this->namespace . '\\Types\\' . $type);
-        $fromResponseResultMethod
+    /**
+     * @param array<string,array{0: int, 1: string}> $arrayTypes
+     */
+    private function generateDenormalizeTypeMethod(
+        array $params,
+        string $type,
+        array $arrayTypes
+    ): Method {
+        $denormalizeTypeMethod = new Method(sprintf('denormalize%s', $type));
+        $denormalizeTypeMethod->setPublic();
+        $denormalizeTypeMethod->setReturnType($this->namespace . '\\Types\\' . $type);
+        $denormalizeTypeMethod
             ->addParameter('data')
             ->setType(Type::Array);
 
         if (in_array($type, $this->abstractClasses)) {
-            $fromResponseResultMethod->addBody(
+            $denormalizeTypeMethod->addBody(
                 sprintf(
                     'throw new \RuntimeException("class %s is abstract and not yet implemented");',
                     $type
                 )
             );
 
-            return $fromResponseResultMethod;
+            return $denormalizeTypeMethod;
         }
 
         if (count($params) === 0) {
-            $fromResponseResultMethod->addBody(
+            $denormalizeTypeMethod->addBody(
                 sprintf('return new %s();', $type)
             );
 
-            return $fromResponseResultMethod;
+            return $denormalizeTypeMethod;
         }
 
         $requiredParams = array_filter($params, fn ($param) => !$param->hasDefaultValue());
 
         if (count($requiredParams) > 0) {
-            $fromResponseResultMethod->addBody('$requiredFields = [');
+            $denormalizeTypeMethod->addBody('$requiredFields = [');
             foreach ($requiredParams as $param) {
-                $fromResponseResultMethod->addBody(sprintf(
+                $denormalizeTypeMethod->addBody(sprintf(
                     '    \'%s\',',
                     Str::snake($param->getName())
                 ));
             }
 
-            $fromResponseResultMethod->addBody("];\n");
+            $denormalizeTypeMethod->addBody("];\n");
 
-            $fromResponseResultMethod->addBody(
+            $denormalizeTypeMethod->addBody(
                 <<<'RequiredCheck'
             $missingFields = [];
 
@@ -551,7 +582,7 @@ class StubCreator
             );
         }
 
-        $fromResponseResultMethod->addBody(sprintf('return new %s(', $type));
+        $denormalizeTypeMethod->addBody(sprintf('return new %s(', $type));
 
         /** @var Parameter $param */
         foreach ($params as $param) {
@@ -570,33 +601,90 @@ class StubCreator
                 $defaultValue = null;
             }
 
-            $value = sprintf('$data[\'%s\']', Str::snake($param->getName()));
+            $snakeParamName = Str::snake($param->getName());
+            $value = sprintf('$data[\'%s\']', $snakeParamName);
 
-            $paramType = $param->getType();
+            $paramType = (string) $param->getType();
             $paramTypeBase = explode('\\', $paramType);
             $paramTypeBase = $paramTypeBase[count($paramTypeBase) - 1];
             $paramTypeBase = explode('|', $paramTypeBase);
             $paramTypeBase = $paramTypeBase[0];
 
+            $handlingArray = $paramTypeBase === 'array';
+
+            if ($handlingArray) {
+                [$arrayLevel, $paramTypeBase] = $arrayTypes[$snakeParamName];
+            }
+
             if (!Validators::isBuiltinType($paramTypeBase)) {
                 if ($defaultValue !== null) {
-                    $value = <<<VALUE
-                    ($value ?? null) !== null
-                            ? \$this->denormalize{$paramTypeBase}($value)
-                            : null
-                    VALUE;
+                    if ($handlingArray) {
+                        if ($arrayLevel === 1) {
+                            $value = <<<VALUE
+                            ($value ?? null) !== null
+                                    ? array_map(fn (array \$item) => \$this->denormalize{$paramTypeBase}(\$item), $value)
+                                    : null
+                            VALUE;
+                        } elseif ($arrayLevel === 2) {
+                            $value = <<<VALUE
+                            ($value ?? null) !== null
+                                    ? array_map(
+                                        fn (array \$item0) => array_map(
+                                            fn (array \$item1) => \$this->denormalize{$paramTypeBase}(\$item1),
+                                            \$item0
+                                        ),
+                                        $value
+                                    )
+                                    : null
+                            VALUE;
+                        } else {
+                            throw new \RuntimeException('Array level >2 not supported');
+                        }
+                    } else {
+                        $value = <<<VALUE
+                        ($value ?? null) !== null
+                                ? \$this->denormalize{$paramTypeBase}($value)
+                                : null
+                        VALUE;
+                    }
 
                     $defaultValue = null;
                 } else {
-                    $value = sprintf(
-                        '$this->denormalize%s($data[\'%s\'])',
-                        $paramTypeBase,
-                        Str::snake($param->getName())
-                    );
+                    if ($handlingArray) {
+                        if ($arrayLevel === 1) {
+                            $value = sprintf(
+                                'array_map(fn (array $item) => $this->denormalize%s($item), $data[\'%s\'])',
+                                $paramTypeBase,
+                                $snakeParamName
+                            );
+                        } elseif ($arrayLevel === 2) {
+                            $value = sprintf(
+                                <<<'BODY'
+                                array_map(
+                                        fn (array $item0) => array_map(
+                                            fn (array $item1) => $this->denormalize%s($item1),
+                                            $item0
+                                        ),
+                                        $data['%s']
+                                    )
+                                BODY,
+                                $paramTypeBase,
+                                $snakeParamName
+                            );
+                        } else {
+                            throw new \RuntimeException('Array level >2 not supported');
+                        }
+                    } else {
+                        $value = sprintf(
+                            '$this->denormalize%s($data[\'%s\'])',
+                            $paramTypeBase,
+                            $snakeParamName
+                        );
+                    }
                 }
             }
 
-            $fromResponseResultMethod->addBody(sprintf(
+            $denormalizeTypeMethod->addBody(sprintf(
                 '    %s: %s%s,',
                 $param->getName(),
                 $value,
@@ -604,9 +692,9 @@ class StubCreator
             ));
         }
 
-        $fromResponseResultMethod->addBody(');');
+        $denormalizeTypeMethod->addBody(');');
 
-        return $fromResponseResultMethod;
+        return $denormalizeTypeMethod;
     }
 
     /**
@@ -674,50 +762,19 @@ class StubCreator
         $serializeMethod->setPublic();
         $serializeMethod->setBody('return json_encode($this->normalize($data));');
 
-        // public function denormalize(array $data, array $types): mixed
-        //    {
-        //        foreach ($types as $type) {
-        //            if (class_exists($type) && is_subclass_of($type, TypeInterface::class)) {
-        //                return $this->denormalizeType($data, $type);
-        //            } elseif ($type === 'bool') {
-        //                return (bool) $data;
-        //            } elseif ($type === 'int') {
-        //                return (int) $data;
-        //            } elseif ($type === 'string') {
-        //                return (string) $data;
-        //            } elseif (str_starts_with($type, 'array<')) {
-        //                preg_match('/array<(.+)>/', $type, $matches);
-        //                $innerType = $matches[1];
-        //                $resultArray = [];
-        //
-        //                foreach ($data as $item) {
-        //                    $resultArray[] = $this->denormalize($item, [$innerType]);
-        //                }
-        //
-        //                return $resultArray;
-        //            }
-        //        }
-        //
-        //        throw new \UnexpectedValueException(sprintf('Failed to decode response to any of the expected types: %s', implode(', ', $types)));
-        //    }
-        //
-        //    public function deserialize(string $data, array $types): mixed
-        //    {
-        //        $response = json_decode($data, true);
-        //
-        //        return $this->denormalize($response, $types);
-        //    }
-
         $deserializeMethod = $class->addMethod('deserialize');
         $deserializeMethod->addParameter('data')->setType(Type::String);
         $deserializeMethod->addParameter('types')->setType(Type::Array);
         $deserializeMethod->setReturnType('mixed');
         $deserializeMethod->setPublic();
-        $deserializeMethod->setBody('
-            $response = json_decode($data, true);
-            
-            return $this->denormalize($response, $types);
-        ');
+        $deserializeMethod->setBody(<<<'BODY'
+            $decoded = json_decode($data, true, 512, JSON_THROW_ON_ERROR);
+
+            return is_array($decoded) 
+                ? $this->denormalize($decoded, $types)
+                : $decoded;
+            BODY
+        );
 
         $denormalizeMethod = $class->addMethod('denormalize');
         $denormalizeMethod->addParameter('data')->setType(Type::Array);
@@ -728,25 +785,19 @@ class StubCreator
             foreach ($types as $type) {
                 if (class_exists($type) && is_subclass_of($type, TypeInterface::class)) {
                     return $this->denormalizeType($data, $type);
-                } elseif ($type === 'bool') {
-                    return (bool) $data;
-                } elseif ($type === 'int') {
-                    return (int) $data;
-                } elseif ($type === 'string') {
-                    return (string) $data;
                 } elseif (str_starts_with($type, 'array<')) {
                     preg_match('/array<(.+)>/', $type, $matches);
                     $innerType = $matches[1];
                     $resultArray = [];
-                    
+
                     foreach ($data as $item) {
                         $resultArray[] = $this->denormalize($item, [$innerType]);
                     }
-                    
+
                     return $resultArray;
                 }
             }
-            
+
             throw new \UnexpectedValueException(sprintf('Failed to decode response to any of the expected types: %s', implode(', ', $types)));
             BODY
         );
