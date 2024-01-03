@@ -38,6 +38,11 @@ class StubCreator
     private array $extendedClasses = [];
 
     /**
+     * @var array<string, array<string>>
+     */
+    private array $extendedBy = [];
+
+    /**
      * @var array<AbstractClassResolverInterface>
      */
     private array $abstractClassResolvers = [];
@@ -78,6 +83,7 @@ class StubCreator
             if (!empty($type['extended_by'])) {
                 $typeName = $type['name'];
                 $this->abstractClasses[] = $typeName;
+                $this->extendedBy[$typeName] = $type['extended_by'];
 
                 foreach ($type['extended_by'] as $extendedType) {
                     $this->extendedClasses[$extendedType] = $typeName;
@@ -224,7 +230,7 @@ class StubCreator
             ->setValue(null);
         $response->addProperty('description')
             ->setPublic()
-            ->setType(Type::STRING)
+            ->setType(Type::String)
             ->setNullable()
             ->setValue(null);
         $response->addProperty('parameters')
@@ -258,8 +264,16 @@ class StubCreator
             $constructor = $typeClass->addMethod('__construct');
             $params = [];
 
+            if (isset($type['description'])) {
+                $typeClass->addComment($type['description']);
+            }
+
             if (in_array($type['name'], $this->abstractClasses)) {
                 $typeClass->setAbstract();
+
+                foreach ($this->extendedBy[$type['name']] as $extendedType) {
+                    $typeClass->addComment(sprintf('@see %s', $extendedType));
+                }
             }
 
             if (array_key_exists($type['name'], $this->extendedClasses)) {
@@ -267,8 +281,6 @@ class StubCreator
             } else {
                 $typeClass->addImplement($namespace . '\\TypeInterface');
             }
-
-            $typeClass->setComment($type['description'] ?? null);
 
             $arrayTypes = [];
 
