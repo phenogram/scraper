@@ -17,6 +17,7 @@ use Nette\PhpGenerator\PhpNamespace;
 use Nette\PhpGenerator\PromotedParameter;
 use Nette\PhpGenerator\Type;
 use Nette\Utils\Validators;
+use TgScraper\Common\AbstractClassResolvers\AbstractClassResolverInterface;
 use TgScraper\TgScraper;
 
 /**
@@ -35,6 +36,11 @@ class StubCreator
      * @var array<string>
      */
     private array $extendedClasses = [];
+
+    /**
+     * @var array<AbstractClassResolverInterface>
+     */
+    private array $abstractClassResolvers = [];
 
     /**
      * StubCreator constructor.
@@ -57,20 +63,28 @@ class StubCreator
             throw new \InvalidArgumentException('Schema invalid');
         }
 
-        $this->getExtendedTypes();
+        $this->parseAbstractTypes();
         $this->namespace = $namespace;
     }
 
     /**
      * Builds the abstract and the extended class lists.
      */
-    private function getExtendedTypes(): void
+    private function parseAbstractTypes(): void
     {
+        $abstractResolversNamespace = 'TgScraper\Common\AbstractClassResolvers';
+
         foreach ($this->schema['types'] as $type) {
             if (!empty($type['extended_by'])) {
-                $this->abstractClasses[] = $type['name'];
+                $typeName = $type['name'];
+                $this->abstractClasses[] = $typeName;
+
                 foreach ($type['extended_by'] as $extendedType) {
-                    $this->extendedClasses[$extendedType] = $type['name'];
+                    $this->extendedClasses[$extendedType] = $typeName;
+                }
+
+                if (class_exists($abstractResolversNamespace . '\\' . $typeName)) {
+                    $this->abstractClassResolvers[$typeName] = $abstractResolversNamespace . '\\' . $typeName;
                 }
             }
         }
@@ -244,9 +258,7 @@ class StubCreator
             $constructor = $typeClass->addMethod('__construct');
             $params = [];
 
-            $isAbstract = in_array($type['name'], $this->abstractClasses);
-
-            if ($isAbstract) {
+            if (in_array($type['name'], $this->abstractClasses)) {
                 $typeClass->setAbstract();
             }
 
@@ -526,11 +538,19 @@ class StubCreator
             ->setType(Type::Array);
 
         if (in_array($type, $this->abstractClasses)) {
+            if (!isset($this->abstractClassResolvers[$type])) {
+                $denormalizeTypeMethod->addBody(
+                    sprintf(
+                        'throw new \RuntimeException("class %s is abstract and not yet implemented");',
+                        $type
+                    )
+                );
+
+                return $denormalizeTypeMethod;
+            }
+
             $denormalizeTypeMethod->addBody(
-                sprintf(
-                    'throw new \RuntimeException("class %s is abstract and not yet implemented");',
-                    $type
-                )
+                $this->abstractClassResolvers[$type]::getBody($params)
             );
 
             return $denormalizeTypeMethod;
@@ -857,7 +877,7 @@ class StubCreator
                 }
                 
                 if (is_array($value)) {
-                    $result[$snakeKey] = json_encode($this->normalize($value));
+                    $result[$snakeKey] = $this->normalize($value);
                 } else {
                     $result[$snakeKey] = $value;
                 }
