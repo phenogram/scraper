@@ -13,7 +13,7 @@ class ChatMember implements AbstractClassResolverInterface
                 'member' => $this->denormalizeChatMemberMember($data),
                 'restricted' => $this->denormalizeChatMemberRestricted($data),
                 'left' => $this->denormalizeChatMemberLeft($data),
-                'banned' => $this->denormalizeChatMemberBanned($data),
+                'kicked' => $this->denormalizeChatMemberBanned($data),
                 default => throw new \InvalidArgumentException(sprintf('Invalid status value: %s', $data['status'])),
             };
             BODY;
