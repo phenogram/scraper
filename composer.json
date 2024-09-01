@@ -1,6 +1,6 @@
 {
-  "name": "sysbot/tgscraper",
-  "description": "Utility to extract scheme from Telegram Bot API webpage.",
+  "name": "phenogram/scraper",
+  "description": "Utility to scrape Telegram bot API documentation page and convert it into PHP classes.",
   "license": "LGPL-3.0-or-later",
   "require": {
     "php": ">=8.0",

@@ -84,13 +84,7 @@ interface TelegramBotApiClientInterface
 Install the library with composer:
 
 ```bash 
-  $ composer require sysbot/tgscraper --prefer-stable
-```
-
-(Optional) Install the cache package:
-
-```bash 
-  $ composer require sysbot/tgscraper-cache
+  $ composer require phenogram/scraper
 ```
 
 ## Using from command line
