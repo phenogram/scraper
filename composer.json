@@ -40,6 +40,12 @@
   ],
   "authors": [
     {
+      "name": "Nikolai Shangin",
+      "email": "shanginn@gmail.com",
+      "homepage": "https://shanginn.ru",
+      "role": "Developer"
+    },
+    {
       "name": "sys-001",
       "email": "sys@sys001.ml",
       "homepage": "https://sys001.ml",

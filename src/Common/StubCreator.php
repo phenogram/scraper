@@ -20,9 +20,6 @@ use Nette\Utils\Validators;
 use TgScraper\Common\AbstractClassResolvers\AbstractClassResolverInterface;
 use TgScraper\TgScraper;
 
-/**
- * Class StubCreator.
- */
 class StubCreator
 {
     private string $namespace;
@@ -351,18 +348,18 @@ class StubCreator
         $apiInterfaceFile = new PhpFile();
 
         $phpNamespace = $file->addNamespace($this->namespace);
-        $phpNamespace->addUse('React\Promise\PromiseInterface');
-        $apiClass = $phpNamespace->addClass('TelegramBotApi');
+        $phpNamespace->addUse('Shanginn\TelegramBotApiBindings\PromiseInterface');
+        $apiClass = $phpNamespace->addClass('Api');
 
         $apiInterfaceNamespace = $apiInterfaceFile->addNamespace($this->namespace);
-        $apiInterfaceNamespace->addUse('React\Promise\PromiseInterface');
-        $apiInterface = $apiInterfaceNamespace->addInterface('TelegramBotApiInterface');
+        $apiInterfaceNamespace->addUse('Shanginn\TelegramBotApiBindings\PromiseInterface');
+        $apiInterface = $apiInterfaceNamespace->addInterface('ApiInterface');
 
         $apiClass->addImplement($this->namespace . '\\' . $apiInterface->getName());
 
-        [$clientInterfaceFile, $clientInterface] = $this->generateTelegramBotApiClientInterface();
-        [$serializerInterfaceFile, $serializerInterface] = $this->generateTelegramBotApiSerializerInterface();
-        [$serializerFile, $serializer] = $this->generateTelegramBotApiSerializer($denormalizers);
+        [$clientInterfaceFile, $clientInterface] = $this->generateClientInterface();
+        [$serializerInterfaceFile, $serializerInterface] = $this->generateSerializerInterface();
+        [$serializerFile, $serializer] = $this->generateSerializer($denormalizers);
 
         $constructor = $apiClass->addMethod('__construct');
         $constructor
@@ -380,6 +377,16 @@ class StubCreator
             ->setPrivate();
 
         $doRequestMethod
+            ->addComment(
+                <<<'COMMENT'
+                    @param array<mixed>              $args
+                    @param list<class-string|string> $returnTypes
+
+                    @phpstan-ignore-next-line TODO: add generics to the promise from $returnTypes
+                    COMMENT
+            );
+
+        $doRequestMethod
             ->addParameter('method')
             ->setType(Type::String);
 
@@ -392,7 +399,7 @@ class StubCreator
             ->setType(Type::Array);
 
         $doRequestMethod
-            ->setReturnType('React\Promise\PromiseInterface');
+            ->setReturnType('Shanginn\TelegramBotApiBindings\PromiseInterface');
 
         $doRequestMethod
             ->addBody(
@@ -517,20 +524,20 @@ class StubCreator
             );
 
             $function
-                ->setReturnType('React\Promise\PromiseInterface')
+                ->setReturnType('Shanginn\TelegramBotApiBindings\PromiseInterface')
                 ->addComment(str_replace('param', 'return', $returnComment));
 
             $interfaceFunction
-                ->setReturnType('React\Promise\PromiseInterface')
+                ->setReturnType('Shanginn\TelegramBotApiBindings\PromiseInterface')
                 ->addComment(str_replace('param', 'return', $returnComment));
         }
 
         return [
-            'TelegramBotApi' => $file,
-            'TelegramBotApiInterface' => $apiInterfaceFile,
-            'TelegramBotApiClientInterface' => $clientInterfaceFile,
-            'TelegramBotApiSerializerInterface' => $serializerInterfaceFile,
-            'TelegramBotApiSerializer' => $serializerFile,
+            'Api' => $file,
+            'ApiInterface' => $apiInterfaceFile,
+            'ClientInterface' => $clientInterfaceFile,
+            'SerializerInterface' => $serializerInterfaceFile,
+            'Serializer' => $serializerFile,
         ];
     }
 
@@ -732,20 +739,21 @@ class StubCreator
     /**
      * @return array{0: PhpFile, 1: InterfaceType}
      */
-    private function generateTelegramBotApiClientInterface(): array
+    private function generateClientInterface(): array
     {
         $file = new PhpFile();
 
         $phpNamespace = $file->addNamespace($this->namespace);
-        $phpNamespace->addUse('React\Promise\PromiseInterface');
+        $phpNamespace->addUse('Shanginn\TelegramBotApiBindings\PromiseInterface');
 
-        $interface = $phpNamespace->addInterface('TelegramBotApiClientInterface');
+        $interface = $phpNamespace->addInterface('ClientInterface');
 
         $method = $interface->addMethod('sendRequest')->setPublic();
 
+        $method->addComment('@return PromiseInterface<string>');
         $method->addParameter('method')->setType(Type::String);
         $method->addParameter('json')->setType(Type::String);
-        $method->setReturnType('React\Promise\PromiseInterface');
+        $method->setReturnType('Shanginn\TelegramBotApiBindings\PromiseInterface');
 
         return [$file, $interface];
     }
@@ -753,13 +761,13 @@ class StubCreator
     /**
      * @return array{0: PhpFile, 1: InterfaceType}
      */
-    private function generateTelegramBotApiSerializerInterface(): array
+    private function generateSerializerInterface(): array
     {
         $file = new PhpFile();
 
         $phpNamespace = $file->addNamespace($this->namespace);
 
-        $interface = $phpNamespace->addInterface('TelegramBotApiSerializerInterface');
+        $interface = $phpNamespace->addInterface('SerializerInterface');
 
         $method = $interface->addMethod('serialize')->setPublic();
         $method->addParameter('data')->setType(Type::Array);
@@ -778,15 +786,15 @@ class StubCreator
      *
      * @return array{0: PhpFile, 1: ClassType}
      */
-    private function generateTelegramBotApiSerializer(array $denormalizers): array
+    private function generateSerializer(array $denormalizers): array
     {
         $file = new PhpFile();
 
         $phpNamespace = $file->addNamespace($this->namespace);
         $phpNamespace->addUse($this->namespace . '\\Types\\TypeInterface');
 
-        $class = $phpNamespace->addClass('TelegramBotApiSerializer');
-        $class->addImplement($this->namespace . '\\TelegramBotApiSerializerInterface');
+        $class = $phpNamespace->addClass('Serializer');
+        $class->addImplement($this->namespace . '\\SerializerInterface');
 
         $serializeMethod = $class->addMethod('serialize');
         $serializeMethod->addParameter('data')->setType(Type::Array);
