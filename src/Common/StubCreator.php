@@ -380,9 +380,9 @@ class StubCreator
             ->addComment(
                 <<<'COMMENT'
                     @param array<mixed>              $args
-                    @param list<class-string|string> $returnTypes
+                    @param class-string|'bool'|'string'|'int' $returnType
 
-                    @phpstan-ignore-next-line TODO: add generics to the promise from $returnTypes
+                    @phpstan-ignore-next-line TODO: add generics to the promise from $returnType
                     COMMENT
             );
 
@@ -395,8 +395,13 @@ class StubCreator
             ->setType(Type::Array);
 
         $doRequestMethod
-            ->addParameter('returnTypes')
-            ->setType(Type::Array);
+            ->addParameter('returnType')
+            ->setType(Type::String);
+
+        $doRequestMethod
+            ->addParameter('returnsArray')
+            ->setType(Type::Bool)
+            ->setDefaultValue(false);
 
         $doRequestMethod
             ->setReturnType('Shanginn\TelegramBotApiBindings\PromiseInterface');
@@ -412,7 +417,8 @@ class StubCreator
                         )
                         ->then(fn ($response) => $this->serializer->deserialize(
                             $response,
-                            $returnTypes
+                            $returnType,
+                            $returnsArray
                         ));
                     BODY
             );
@@ -475,14 +481,13 @@ class StubCreator
             }
 
             [
-                'types' => $returnTypes,
                 'comments' => $returnComment
             ] = $this->parseApiFieldTypes($method['return_types'], $phpNamespace, $apiInterfaceNamespace);
 
             $expectedReturnTypes = array_map(
                 function (string $type) {
                     if (Validators::isBuiltinType($type)) {
-                        return $type;
+                        return [$type, false];
                     }
 
                     if (str_starts_with($type, 'array')) {
@@ -492,17 +497,13 @@ class StubCreator
                         $realType = explode('>', $realType)[0];
 
                         if (Validators::isBuiltinType($realType)) {
-                            return $type;
+                            return [$realType, true];
                         }
 
-                        return str_replace(
-                            $realType,
-                            $this->namespace . '\\Types\\' . $realType,
-                            $type
-                        );
+                        return [$realType, true];
                     }
 
-                    return $this->namespace . '\\Types\\' . $type;
+                    return [$type, false];
                 },
                 explode(
                     '|',
@@ -510,13 +511,30 @@ class StubCreator
                 )
             );
 
-            $function
-                ->addBody('return $this->doRequest(
-    __FUNCTION__,
-    get_defined_vars(),
-    ["' . implode('", "', $expectedReturnTypes) . '"]
-);
-');
+            if (count($expectedReturnTypes) > 1 && $expectedReturnTypes[1][0] !== 'bool') {
+                throw new \LogicException('Multiple return types not supported. Get back here and figure something out again.');
+            }
+
+            $body = <<<'BODY'
+                    return $this->doRequest(
+                        method: __FUNCTION__,
+                        args: get_defined_vars(),
+                        returnType: %s,%s
+                    );
+                    BODY
+            ;
+
+            if (Validators::isBuiltinType($expectedReturnTypes[0][0])) {
+                $returnType = sprintf('"%s"', $expectedReturnTypes[0][0]);
+            } else {
+                $returnType = sprintf('%s::class', $expectedReturnTypes[0][0]);
+            }
+
+            $function->addBody(sprintf(
+                $body,
+                $returnType,
+                $expectedReturnTypes[0][1] ? "\n    returnsArray: true," : '',
+            ));
 
             $returnComment = sprintf(
                 '@return PromiseInterface<%s>',
@@ -775,7 +793,8 @@ class StubCreator
 
         $method = $interface->addMethod('deserialize')->setPublic();
         $method->addParameter('data')->setType(Type::String);
-        $method->addParameter('types')->setType(Type::Array);
+        $method->addParameter('type')->setType(Type::String);
+        $method->addParameter('isArray')->setType(Type::Bool)->setDefaultValue(false);
         $method->setReturnType(Type::Mixed);
 
         return [$file, $interface];
@@ -804,41 +823,35 @@ class StubCreator
 
         $deserializeMethod = $class->addMethod('deserialize');
         $deserializeMethod->addParameter('data')->setType(Type::String);
-        $deserializeMethod->addParameter('types')->setType(Type::Array);
+        $deserializeMethod->addParameter('type')->setType(Type::String);
+        $deserializeMethod->addParameter('isArray')->setType(Type::Bool)->setDefaultValue(false);
         $deserializeMethod->setReturnType('mixed');
         $deserializeMethod->setPublic();
         $deserializeMethod->setBody(<<<'BODY'
             $decoded = json_decode($data, true, 512, JSON_THROW_ON_ERROR);
 
             return is_array($decoded) 
-                ? $this->denormalize($decoded, $types)
+                ? $this->denormalize($decoded, $type, $isArray)
                 : $decoded;
             BODY
         );
 
         $denormalizeMethod = $class->addMethod('denormalize');
         $denormalizeMethod->addParameter('data')->setType(Type::Array);
-        $denormalizeMethod->addParameter('types')->setType(Type::Array);
+        $denormalizeMethod->addParameter('type')->setType(Type::String);
+        $denormalizeMethod->addParameter('isArray')->setType(Type::Bool)->setDefaultValue(false);
         $denormalizeMethod->setReturnType('mixed');
         $denormalizeMethod->setPublic();
         $denormalizeMethod->setBody(<<<'BODY'
-            foreach ($types as $type) {
-                if (class_exists($type) && is_subclass_of($type, TypeInterface::class)) {
-                    return $this->denormalizeType($data, $type);
-                } elseif (str_starts_with($type, 'array<')) {
-                    preg_match('/array<(.+)>/', $type, $matches);
-                    $innerType = $matches[1];
-                    $resultArray = [];
-
-                    foreach ($data as $item) {
-                        $resultArray[] = $this->denormalize($item, [$innerType]);
-                    }
-
-                    return $resultArray;
-                }
+            if (!class_exists($type) || !is_subclass_of($type, TypeInterface::class)) {
+                throw new \UnexpectedValueException(sprintf('Failed to decode response to the expected type: %s', $type));
             }
-
-            throw new \UnexpectedValueException(sprintf('Failed to decode response to any of the expected types: %s', implode(', ', $types)));
+            
+            if (!$isArray) {
+                return $this->denormalizeType($data, $type);
+            }
+            
+            return array_map(fn (array $item) => $this->denormalizeType($item, $type), $data);
             BODY
         );
 
