@@ -1,13 +1,7 @@
-# TGScraper
+# Telegram bot API Scraper
 
-[![License](http://poser.pugx.org/sysbot/tgscraper/license)](https://packagist.org/packages/sysbot/tgscraper)
-![Required PHP Version](https://img.shields.io/badge/php-%E2%89%A58.0-brightgreen)
-[![Latest Stable Version](http://poser.pugx.org/sysbot/tgscraper/v)](https://packagist.org/packages/sysbot/tgscraper)
-[![Dependencies](https://img.shields.io/librariesio/github/Sysbot-org/tgscraper)](https://libraries.io/github/Sysbot-org/tgscraper)
-[![Code Quality](https://img.shields.io/scrutinizer/quality/g/Sysbot-org/tgscraper)](https://scrutinizer-ci.com/g/Sysbot-org/tgscraper/?branch=master)
-
-A PHP library used to extract JSON data (and auto-generate PHP classes)
-from [Telegram bot API documentation page](https://core.telegram.org/bots/api).
+PHP bin to scrape Telegram bot API documentation page and convert it into PHP classes
+to use in [Phenogram low level binding](https://github.com/phenogram/bindings)
 
 ## Fork motivation
 ### Promoted properties
@@ -85,11 +79,6 @@ interface TelegramBotApiClientInterface
 3. Sort class params from required to optional
 4. Code style
 
-## Changelog
-
-Interested in recent changes? Have a look [here](CHANGELOG.md)!
-
-
 ## Installation
 
 Install the library with composer:
@@ -160,17 +149,17 @@ TGScraper can also generate class stubs that you can use in your library. A samp
 Create stubs in the `out/` directory using `Sysbot\Telegram` as namespace prefix:
 
 ```bash 
-  $ vendor/bin/tgscraper app:create-stubs --namespace-prefix "Sysbot\Telegram" out
+  $ vendor/bin/tgscraper app:create-stubs --namespace-prefix "Phenogram\Telegram" out
 ```
 
 ### All versions
 
 If you want to generate all schemas and stubs for every Bot API version, you can!
 
-Here's an example on how to export everything to the `out/` directory, with schemas in human-readable format and using `Sysbot\Telegram` as namespace prefix for the stubs:
+Here's an example on how to export everything to the `out/` directory, with schemas in human-readable format and using `Phenogram\Telegram` as namespace prefix for the stubs:
 
 ```bash 
-  $ vendor/bin/tgscraper app:dump-schemas -r --namespace-prefix "Sysbot\Telegram" out
+  $ vendor/bin/tgscraper app:dump-schemas -r --namespace-prefix "Phenogram\Telegram" out
 ```
 
 ## Custom format
