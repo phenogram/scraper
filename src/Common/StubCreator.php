@@ -348,11 +348,9 @@ class StubCreator
         $apiInterfaceFile = new PhpFile();
 
         $phpNamespace = $file->addNamespace($this->namespace);
-        $phpNamespace->addUse('Shanginn\TelegramBotApiBindings\PromiseInterface');
         $apiClass = $phpNamespace->addClass('Api');
 
         $apiInterfaceNamespace = $apiInterfaceFile->addNamespace($this->namespace);
-        $apiInterfaceNamespace->addUse('Shanginn\TelegramBotApiBindings\PromiseInterface');
         $apiInterface = $apiInterfaceNamespace->addInterface('ApiInterface');
 
         $apiClass->addImplement($this->namespace . '\\' . $apiInterface->getName());
@@ -404,22 +402,21 @@ class StubCreator
             ->setDefaultValue(false);
 
         $doRequestMethod
-            ->setReturnType('Shanginn\TelegramBotApiBindings\PromiseInterface');
+            ->setReturnType('mixed');
 
         $doRequestMethod
             ->addBody(
                 <<<'BODY'
+                    $response = $this->client->sendRequest(
+                        $method,
+                        $this->serializer->serialize($args)
+                    );
                     
-                    return $this->client
-                        ->sendRequest(
-                            $method,
-                            $this->serializer->serialize($args)
-                        )
-                        ->then(fn ($response) => $this->serializer->deserialize(
-                            $response,
-                            $returnType,
-                            $returnsArray
-                        ));
+                    return $this->serializer->deserialize(
+                        $response,
+                        $returnType,
+                        $returnsArray
+                    );
                     BODY
             );
 
@@ -486,19 +483,11 @@ class StubCreator
 
             $expectedReturnTypes = array_map(
                 function (string $type) {
-                    if (Validators::isBuiltinType($type)) {
-                        return [$type, false];
-                    }
-
                     if (str_starts_with($type, 'array')) {
                         // find the last type in the array
                         $realType = explode('<', $type);
                         $realType = $realType[count($realType) - 1];
                         $realType = explode('>', $realType)[0];
-
-                        if (Validators::isBuiltinType($realType)) {
-                            return [$realType, true];
-                        }
 
                         return [$realType, true];
                     }
@@ -515,38 +504,52 @@ class StubCreator
                 throw new \LogicException('Multiple return types not supported. Get back here and figure something out again.');
             }
 
+            [$expectedReturnType, $isArray] = $expectedReturnTypes[0];
+
             $body = <<<'BODY'
                     return $this->doRequest(
-                        method: __FUNCTION__,
+                        method: '%s',
                         args: get_defined_vars(),
                         returnType: %s,%s
                     );
-                    BODY
-            ;
+                    BODY;
 
-            if (Validators::isBuiltinType($expectedReturnTypes[0][0])) {
-                $returnType = sprintf('"%s"', $expectedReturnTypes[0][0]);
-            } else {
-                $returnType = sprintf('%s::class', $expectedReturnTypes[0][0]);
-            }
+            $returnType = Validators::isBuiltinType($expectedReturnType)
+                ? "'$expectedReturnType'"
+                : "$expectedReturnType::class";
 
             $function->addBody(sprintf(
                 $body,
+                $method['name'],
                 $returnType,
                 $expectedReturnTypes[0][1] ? "\n    returnsArray: true," : '',
             ));
 
             $returnComment = sprintf(
-                '@return PromiseInterface<%s>',
+                '@return %s',
                 str_replace('@param ', '', $returnComment)
             );
 
+            if ($isArray) {
+                $functionReturnType = 'array';
+            } else {
+                if (Validators::isBuiltinType($expectedReturnType)) {
+                    $functionReturnType = $expectedReturnType;
+                } else {
+                    $functionReturnType = $this->namespace . '\\Types\\' . $expectedReturnType;
+                }
+            }
+
+            if (count($expectedReturnTypes) > 1) {
+                $functionReturnType .= '|bool';
+            }
+
             $function
-                ->setReturnType('Shanginn\TelegramBotApiBindings\PromiseInterface')
+                ->setReturnType($functionReturnType)
                 ->addComment(str_replace('param', 'return', $returnComment));
 
             $interfaceFunction
-                ->setReturnType('Shanginn\TelegramBotApiBindings\PromiseInterface')
+                ->setReturnType($functionReturnType)
                 ->addComment(str_replace('param', 'return', $returnComment));
         }
 
@@ -762,16 +765,14 @@ class StubCreator
         $file = new PhpFile();
 
         $phpNamespace = $file->addNamespace($this->namespace);
-        $phpNamespace->addUse('Shanginn\TelegramBotApiBindings\PromiseInterface');
 
         $interface = $phpNamespace->addInterface('ClientInterface');
 
         $method = $interface->addMethod('sendRequest')->setPublic();
 
-        $method->addComment('@return PromiseInterface<string>');
         $method->addParameter('method')->setType(Type::String);
         $method->addParameter('json')->setType(Type::String);
-        $method->setReturnType('Shanginn\TelegramBotApiBindings\PromiseInterface');
+        $method->setReturnType(Type::String);
 
         return [$file, $interface];
     }
