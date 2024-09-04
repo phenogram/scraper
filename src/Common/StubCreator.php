@@ -210,19 +210,19 @@ class StubCreator
 
         $responseFile = new PhpFile();
         $responseNamespace = $responseFile->addNamespace($namespace);
-        $responseNamespace->addUse('stdClass');
+
         $response = $responseNamespace->addClass('Response');
         $response->addProperty('ok')
             ->setPublic()
             ->setType(Type::Bool);
         $response->addProperty('result')
             ->setPublic()
-            ->setType(sprintf('stdClass|%s\\TypeInterface|array|int|string|bool', $namespace))
+            ->setType(Type::String)
             ->setNullable()
             ->setValue(null);
         $response->addProperty('errorCode')
             ->setPublic()
-            ->setType(Type::INT)
+            ->setType(Type::Int)
             ->setNullable()
             ->setValue(null);
         $response->addProperty('description')
@@ -232,7 +232,7 @@ class StubCreator
             ->setValue(null);
         $response->addProperty('parameters')
             ->setPublic()
-            ->setType(sprintf('stdClass|%s\\ResponseParameters', $namespace))
+            ->setType(sprintf('%s\\ResponseParameters', $namespace))
             ->setNullable()
             ->setValue(null);
         $response->addImplement($namespace . '\\TypeInterface');
@@ -765,6 +765,7 @@ class StubCreator
         $file = new PhpFile();
 
         $phpNamespace = $file->addNamespace($this->namespace);
+        $phpNamespace->addUse(sprintf('%s\\Types\\Response', $this->namespace));
 
         $interface = $phpNamespace->addInterface('ClientInterface');
 
@@ -772,7 +773,7 @@ class StubCreator
 
         $method->addParameter('method')->setType(Type::String);
         $method->addParameter('json')->setType(Type::String);
-        $method->setReturnType(Type::String);
+        $method->setReturnType(sprintf('%s\\Types\\Response', $this->namespace));
 
         return [$file, $interface];
     }
