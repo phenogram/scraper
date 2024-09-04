@@ -435,8 +435,12 @@ class StubCreator
                         $this->serializer->serialize($args)
                     );
                     
+                    if (!$response->ok || $response->result === null) {
+                        throw new ResponseException($response);
+                    }
+
                     return $this->serializer->deserialize(
-                        $response,
+                        $response->result,
                         $returnType,
                         $returnsArray
                     );
