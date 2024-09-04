@@ -212,29 +212,52 @@ class StubCreator
         $responseNamespace = $responseFile->addNamespace($namespace);
 
         $response = $responseNamespace->addClass('Response');
-        $response->addProperty('ok')
+        $response->addComment(<<<TXT
+            The response contains a JSON object, which always has a Boolean field 'ok'
+            and may have an optional String field 'description' with a human-readable description
+            of the result.
+            
+            If 'ok' equals True, the request was successful and the result of the query
+            can be found in the 'result' field. In case of an unsuccessful request,
+            'ok' equals false and the error is explained in the 'description'.
+            
+            An Integer 'error_code' field is also returned, but its contents are subject to change in the future.
+            Some errors may also have an optional field 'parameters' of the type ResponseParameters,
+            which can help to automatically handle the error.
+            TXT
+        );
+
+        $constructor = $response->addMethod('__construct');
+
+        $constructor->addPromotedParameter('ok')
             ->setPublic()
             ->setType(Type::Bool);
-        $response->addProperty('result')
+
+        $constructor->addPromotedParameter('result')
             ->setPublic()
             ->setType(Type::String)
             ->setNullable()
-            ->setValue(null);
-        $response->addProperty('errorCode')
+            ->setDefaultValue(null)
+            ->setComment('JSON encoded value of the result field');
+
+        $constructor->addPromotedParameter('errorCode')
             ->setPublic()
             ->setType(Type::Int)
             ->setNullable()
-            ->setValue(null);
-        $response->addProperty('description')
+            ->setDefaultValue(null);
+
+        $constructor->addPromotedParameter('description')
             ->setPublic()
             ->setType(Type::String)
             ->setNullable()
-            ->setValue(null);
-        $response->addProperty('parameters')
+            ->setDefaultValue(null);
+
+        $constructor->addPromotedParameter('parameters')
             ->setPublic()
             ->setType(sprintf('%s\\ResponseParameters', $namespace))
             ->setNullable()
-            ->setValue(null);
+            ->setDefaultValue(null);
+
         $response->addImplement($namespace . '\\TypeInterface');
 
         return [
