@@ -213,8 +213,8 @@ class StubCreator
 
         $response = $responseNamespace->addClass('Response');
         $response->addComment(<<<TXT
-            The response contains a JSON object, which always has a Boolean field 'ok'
-            and may have an optional String field 'description' with a human-readable description
+            The response contains a JSON object, which always has a Boolean field 'ok' and may 
+            have an optional String field 'description' with a human-readable description
             of the result.
             
             If 'ok' equals True, the request was successful and the result of the query
