@@ -140,7 +140,7 @@ stubs from this library, **ALWAYS** review the code!_
 
 TGScraper can also generate class stubs that you can use in your library. A sample implementation is available in the [Sysbot Telegram module](https://github.com/Sysbot-org/Sysbot-tg).
 
-Create stubs in the `out/` directory using `Sysbot\Telegram` as namespace prefix:
+Create stubs in the `out/` directory using `Phenogram\Telegram` as namespace prefix:
 
 ```bash 
   $ vendor/bin/tgscraper app:create-stubs --namespace-prefix "Phenogram\Telegram" out
