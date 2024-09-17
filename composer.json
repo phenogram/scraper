@@ -2,7 +2,7 @@
   "name": "phenogram/scraper",
   "description": "Utility to scrape Telegram bot API documentation page and convert it into PHP classes.",
   "license": "LGPL-3.0-or-later",
-  "version": "2.1.2",
+  "version": "2.2.0",
   "require": {
     "php": ">=8.0",
     "ext-json": "*",

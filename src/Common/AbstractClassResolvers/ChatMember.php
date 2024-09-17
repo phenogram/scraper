@@ -6,7 +6,7 @@ class ChatMember implements AbstractClassResolverInterface
 {
     public static function getBody(array $params): string
     {
-        return <<<'BODY'
+        return <<<'PHP'
             return match ($data['status']) {
                 'creator' => $this->denormalizeChatMemberOwner($data),
                 'administrator' => $this->denormalizeChatMemberAdministrator($data),
@@ -16,6 +16,6 @@ class ChatMember implements AbstractClassResolverInterface
                 'kicked' => $this->denormalizeChatMemberBanned($data),
                 default => throw new \InvalidArgumentException(sprintf('Invalid status value: %s', $data['status'])),
             };
-            BODY;
+            PHP;
     }
 }

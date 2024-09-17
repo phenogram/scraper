@@ -6,7 +6,7 @@ class MessageOrigin implements AbstractClassResolverInterface
 {
     public static function getBody(array $params): string
     {
-        return <<<'BODY'
+        return <<<'PHP'
             return match ($data['type']) {
                 'user' => $this->denormalizeMessageOriginUser($data),
                 'hidden_user' => $this->denormalizeMessageOriginHiddenUser($data),
@@ -14,6 +14,6 @@ class MessageOrigin implements AbstractClassResolverInterface
                 'channel' => $this->denormalizeMessageOriginChannel($data),
                 default => throw new \InvalidArgumentException(sprintf('Invalid type "%s" given. Supported types are: "user", "hidden_user", "chat", "channel"', $data['type'])),
             };
-            BODY;
+            PHP;
     }
 }
