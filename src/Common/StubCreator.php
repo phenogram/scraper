@@ -10,6 +10,7 @@ use Illuminate\Support\Str;
 use Nette\PhpGenerator\ClassType;
 use Nette\PhpGenerator\Helpers;
 use Nette\PhpGenerator\InterfaceType;
+use Nette\PhpGenerator\Literal;
 use Nette\PhpGenerator\Method;
 use Nette\PhpGenerator\Parameter;
 use Nette\PhpGenerator\PhpFile;
@@ -391,11 +392,12 @@ class StubCreator
         $constructor
             ->addPromotedParameter('serializer')
             ->setType($this->namespace . '\\' . $serializerInterface->getName())
-            ->setVisibility('protected');
+            ->setVisibility('protected')
+            ->setDefaultValue(new Literal('new Serializer()'));
 
         $doRequestMethod = $apiClass
             ->addMethod('doRequest')
-            ->setPrivate();
+            ->setProtected();
 
         $doRequestMethod
             ->addComment(
