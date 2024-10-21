@@ -19,6 +19,7 @@ use Nette\PhpGenerator\PromotedParameter;
 use Nette\PhpGenerator\Type;
 use Nette\Utils\Validators;
 use TgScraper\Common\AbstractClassResolvers\AbstractClassResolverInterface;
+use TgScraper\Common\RedefinedTypes\RedefinedTypeInterface;
 use TgScraper\TgScraper;
 
 class StubCreator
@@ -46,6 +47,11 @@ class StubCreator
     private array $abstractClassResolvers = [];
 
     /**
+     * @var array<class-string, RedefinedTypeInterface>
+     */
+    private array $redefinedTypes = [];
+
+    /**
      * StubCreator constructor.
      *
      * @throws \InvalidArgumentException
@@ -67,6 +73,8 @@ class StubCreator
         }
 
         $this->parseAbstractTypes();
+        $this->parseRedefinedTypes();
+
         $this->namespace = $namespace;
     }
 
@@ -89,6 +97,22 @@ class StubCreator
 
                 if (class_exists($abstractResolversNamespace . '\\' . $typeName)) {
                     $this->abstractClassResolvers[$typeName] = $abstractResolversNamespace . '\\' . $typeName;
+                }
+            }
+        }
+    }
+
+    private function parseRedefinedTypes(): void
+    {
+        $redefinedTypesNamespace = 'TgScraper\Common\RedefinedTypes';
+
+        foreach ($this->schema['types'] as $type) {
+            // replace class constructor is this type exist:
+            if (class_exists($redefinedTypesNamespace . '\\' . $type['name'])) {
+                $redefinedType = $redefinedTypesNamespace . '\\' . $type['name'];
+
+                if (is_subclass_of($redefinedType, RedefinedTypeInterface::class)) {
+                    $this->redefinedTypes[$type['name']] = $redefinedType;
                 }
             }
         }
@@ -236,10 +260,10 @@ class StubCreator
 
         $constructor->addPromotedParameter('result')
             ->setPublic()
-            ->setType(Type::String)
+            ->setType(Type::Mixed)
             ->setNullable()
             ->setDefaultValue(null)
-            ->setComment('JSON encoded value of the result field');
+            ->setComment('associative JSON decoded value of the result field');
 
         $constructor->addPromotedParameter('errorCode')
             ->setPublic()
@@ -283,6 +307,7 @@ class StubCreator
             $typeClass = $phpNamespace->addClass($type['name']);
 
             $constructor = $typeClass->addMethod('__construct');
+
             $params = [];
 
             if (isset($type['description'])) {
@@ -346,8 +371,18 @@ class StubCreator
                 return (int) $a[0]->hasDefaultValue() - (int) $b[0]->hasDefaultValue();
             });
 
-            $constructor->setParameters(array_map(fn ($a) => $a[0], $params));
-            $constructor->setComment(implode("\n", array_map(fn ($a) => $a[1], $params)));
+            if (isset($this->redefinedTypes[$type['name']])) {
+                $redefinedType = $this->redefinedTypes[$type['name']];
+
+                $constructorParams = $redefinedType::getConstructorParams();
+                $constructorComment = $redefinedType::getConstructorComment();
+            } else {
+                $constructorParams = array_map(fn ($a) => $a[0], $params);
+                $constructorComment = implode("\n", array_map(fn ($a) => $a[1], $params));
+            }
+
+            $constructor->setParameters($constructorParams);
+            $constructor->setComment($constructorComment);
 
             $types[$type['name']] = $file;
 
@@ -801,7 +836,7 @@ class StubCreator
         $method = $interface->addMethod('sendRequest')->setPublic();
 
         $method->addParameter('method')->setType(Type::String);
-        $method->addParameter('json')->setType(Type::String);
+        $method->addParameter('data')->setType(Type::Array);
         $method->setReturnType(sprintf('%s\\Types\\Response', $this->namespace));
 
         return [$file, $interface];
@@ -820,10 +855,10 @@ class StubCreator
 
         $method = $interface->addMethod('serialize')->setPublic();
         $method->addParameter('data')->setType(Type::Array);
-        $method->setReturnType(Type::String);
+        $method->setReturnType(Type::Array);
 
         $method = $interface->addMethod('deserialize')->setPublic();
-        $method->addParameter('data')->setType(Type::String);
+        $method->addParameter('data')->setType(Type::Mixed);
         $method->addParameter('type')->setType(Type::String);
         $method->addParameter('isArray')->setType(Type::Bool)->setDefaultValue(false);
         $method->setReturnType(Type::Mixed);
@@ -848,22 +883,20 @@ class StubCreator
 
         $serializeMethod = $class->addMethod('serialize');
         $serializeMethod->addParameter('data')->setType(Type::Array);
-        $serializeMethod->setReturnType(Type::String);
+        $serializeMethod->setReturnType(Type::Array);
         $serializeMethod->setPublic();
-        $serializeMethod->setBody('return json_encode($this->normalize($data));');
+        $serializeMethod->setBody('return $this->normalize($data);');
 
         $deserializeMethod = $class->addMethod('deserialize');
-        $deserializeMethod->addParameter('data')->setType(Type::String);
+        $deserializeMethod->addParameter('data')->setType(Type::Mixed);
         $deserializeMethod->addParameter('type')->setType(Type::String);
         $deserializeMethod->addParameter('isArray')->setType(Type::Bool)->setDefaultValue(false);
         $deserializeMethod->setReturnType('mixed');
         $deserializeMethod->setPublic();
         $deserializeMethod->setBody(<<<'BODY'
-            $decoded = json_decode($data, true, 512, JSON_THROW_ON_ERROR);
-
-            return is_array($decoded) 
-                ? $this->denormalize($decoded, $type, $isArray)
-                : $decoded;
+            return is_array($data) 
+                ? $this->denormalize($data, $type, $isArray)
+                : $data;
             BODY
         );
 
@@ -936,7 +969,7 @@ class StubCreator
                 
                 $snakeKey = $this->camelToSnake($key);
                 
-                if ($value instanceof TypeInterface) {
+                if ($value instanceof TypeInterface && !$value instanceof InputFile) {
                     $value = get_object_vars($value);
                 }
                 
