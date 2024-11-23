@@ -119,12 +119,26 @@ class TgScraper
         [
             'types' => $types,
             'files' => $files,
-        ] = $creator->generateCode();
+            'defaultTypeInterface' => $defaultTypeInterface,
+        ] = $creator->generateTypes();
 
-        foreach ($types as $className => $type) {
+        $interfacesDir = $directory . '/Types/Interfaces';
+        if (!file_exists($interfacesDir)) {
+            mkdir($interfacesDir, 0755);
+        }
+
+        $this->logger->info('Generating default TypeInterface');
+        $filename = sprintf('%s/Types/Interfaces/TypeInterface.php', $directory);
+        file_put_contents($filename, $defaultTypeInterface);
+
+        foreach ($types as $className => ['class' => $type, 'interface' => $typeInterface]) {
             $this->logger->info('Generating class for Type: ' . $className);
             $filename = sprintf('%s/Types/%s.php', $directory, $className);
             file_put_contents($filename, $type);
+
+            $this->logger->info('Generating interface for Type: ' . $className);
+            $filename = sprintf('%s/Types/Interfaces/%sInterface.php', $directory, $className);
+            file_put_contents($filename, $typeInterface);
         }
 
         foreach ($files as $filePath => $file) {

@@ -10,7 +10,7 @@ class ChatBoostSource implements AbstractClassResolverInterface
     {
         return <<<'PHP'
             return match ($data['source']) {
-                'premium' => $this->denormalizeChatBoostSourcePremium($data),    
+                'premium' => $this->denormalizeChatBoostSourcePremium($data),
                 'gift_code' => $this->denormalizeChatBoostSourceGiftCode($data),
                 'giveaway' => $this->denormalizeChatBoostSourceGiveaway($data),
                 default => throw new \InvalidArgumentException(sprintf('Invalid source value for ChatBoostSource: %s', $data['source'])),

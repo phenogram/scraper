@@ -16,7 +16,7 @@ class InputFile implements RedefinedTypeInterface
     public static function getConstructorParams(): array
     {
         return [
-            (new PromotedParameter(name: 'filePath'))->setType(Type::String),
+            new PromotedParameter(name: 'filePath')->setType(Type::String),
         ];
     }
 

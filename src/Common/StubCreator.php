@@ -16,6 +16,7 @@ use Nette\PhpGenerator\Parameter;
 use Nette\PhpGenerator\PhpFile;
 use Nette\PhpGenerator\PhpNamespace;
 use Nette\PhpGenerator\PromotedParameter;
+use Nette\PhpGenerator\Property;
 use Nette\PhpGenerator\Type;
 use Nette\Utils\Validators;
 use TgScraper\Common\AbstractClassResolvers\AbstractClassResolverInterface;
@@ -131,8 +132,8 @@ class StubCreator
 
         foreach ($fieldTypes as $fieldType) {
             if (str_starts_with($fieldType, 'Array')) {
+                $fieldType = str_replace('Array', 'array', $fieldType);
                 $types[] = 'array';
-                $comments[] = str_replace('Array', 'array', $fieldType);
 
                 $innerType = explode('<', $fieldType);
 
@@ -146,15 +147,31 @@ class StubCreator
 
                 $arrayType = [$arrayLevels, $innerType];
 
+                $commentType = $fieldType;
+
+                if (ucfirst($innerType) == $innerType) {
+                    $commentType = str_replace($innerType, $innerType . 'Interface', $fieldType);
+
+                    $innerType = $phpNamespace->getName() . '\\Interfaces\\' . $innerType . 'Interface';
+
+                    $phpNamespace->addUse($innerType);
+                }
+
+                $comments[] = $commentType;
+
                 continue;
             }
 
-            $comments[] = $fieldType;
+            $commentType = $fieldType;
 
             if (ucfirst($fieldType) == $fieldType) {
-                $fieldType = $phpNamespace->getName() . '\\' . $fieldType;
+                $commentType .= 'Interface';
+
+                $fieldType = $phpNamespace->getName() . '\\Interfaces\\' . $fieldType . 'Interface';
+                $phpNamespace->addUse($fieldType);
             }
 
+            $comments[] = $commentType;
             $types[] = $fieldType;
         }
 
@@ -170,7 +187,7 @@ class StubCreator
     private function parseApiFieldTypes(
         array $apiTypes,
         PhpNamespace $phpNamespace,
-        PhpNamespace $interfaceNamespace
+        PhpNamespace $interfaceNamespace,
     ): array {
         $types = [];
         $comments = [];
@@ -179,7 +196,7 @@ class StubCreator
             if (str_starts_with($apiType, 'Array')) {
                 $types[] = 'array';
 
-                $comments[] = str_replace('Array', 'array', $apiType);
+                $comment = str_replace('Array', 'array', $apiType);
 
                 $text = $apiType;
 
@@ -190,7 +207,9 @@ class StubCreator
                 $subTypes = explode('|', $text);
                 foreach ($subTypes as $subType) {
                     if (ucfirst($subType) == $subType) {
-                        $subType = $this->namespace . '\\Types\\' . $subType;
+                        $comment = str_replace($subType, $subType . 'Interface', $comment);
+
+                        $subType = "$this->namespace\\Types\\Interfaces\\{$subType}Interface";
                         $phpNamespace->addUse($subType);
                         if ($interfaceNamespace !== null) {
                             $interfaceNamespace->addUse($subType);
@@ -198,19 +217,24 @@ class StubCreator
                     }
                 }
 
+                $comments[] = $comment;
+
                 continue;
             }
 
-            $comments[] = $apiType;
+            $commentType = $apiType;
 
             if (ucfirst($apiType) == $apiType) {
-                $apiType = $this->namespace . '\\Types\\' . $apiType;
+                $commentType .= 'Interface';
+                $apiType = "$this->namespace\\Types\\Interfaces\\{$apiType}Interface";
                 $phpNamespace->addUse($apiType);
 
                 if ($interfaceNamespace !== null) {
                     $interfaceNamespace->addUse($apiType);
                 }
             }
+
+            $comments[] = $commentType;
 
             $types[] = $apiType;
         }
@@ -224,20 +248,27 @@ class StubCreator
     }
 
     /**
-     * @return PhpFile[]
+     * @return array{
+     *     Response: array{class:PhpFile,interface:PhpFile},
+     *     TypeInterface: PhpFile
+     * }
      */
     private function generateDefaultTypes(string $namespace): array
     {
         $interfaceFile = new PhpFile();
 
-        $interfaceNamespace = $interfaceFile->addNamespace($namespace);
+        $interfaceNamespace = $interfaceFile->addNamespace($namespace . '\\Interfaces');
         $interfaceNamespace->addInterface('TypeInterface');
 
         $responseFile = new PhpFile();
         $responseNamespace = $responseFile->addNamespace($namespace);
 
-        $response = $responseNamespace->addClass('Response');
-        $response->addComment(<<<TXT
+        $interfacesNamespace = $namespace . '\\Interfaces';
+
+        $responseInterfaceFile = new PhpFile();
+        $responseInterfaceNamespace = $responseInterfaceFile->addNamespace($interfacesNamespace);
+
+        $comment = <<<TXT
             The response contains a JSON object, which always has a Boolean field 'ok' and may 
             have an optional String field 'description' with a human-readable description
             of the result.
@@ -249,14 +280,25 @@ class StubCreator
             An Integer 'error_code' field is also returned, but its contents are subject to change in the future.
             Some errors may also have an optional field 'parameters' of the type ResponseParameters,
             which can help to automatically handle the error.
-            TXT
-        );
+            TXT;
+
+        $response = $responseNamespace->addClass('Response');
+        $response->addComment($comment);
+
+        $responseInterface = $responseInterfaceNamespace->addInterface('ResponseInterface');
+        $responseInterface->addComment($comment);
 
         $constructor = $response->addMethod('__construct');
 
         $constructor->addPromotedParameter('ok')
             ->setPublic()
             ->setType(Type::Bool);
+
+        $okProperty = $responseInterface->addProperty('ok')
+            ->setType(Type::Bool)
+            ->setPublic();
+        $okProperty->addGetHook('');
+        $okProperty->addSetHook('');
 
         $constructor->addPromotedParameter('result')
             ->setPublic()
@@ -265,11 +307,25 @@ class StubCreator
             ->setDefaultValue(null)
             ->setComment('associative JSON decoded value of the result field');
 
+        $resultProperty = $responseInterface->addProperty('result')
+            ->setType(Type::Mixed)
+            ->setNullable()
+            ->setPublic();
+        $resultProperty->addGetHook('');
+        $resultProperty->addSetHook('');
+
         $constructor->addPromotedParameter('errorCode')
             ->setPublic()
             ->setType(Type::Int)
             ->setNullable()
             ->setDefaultValue(null);
+
+        $errorCodeProperty = $responseInterface->addProperty('errorCode')
+            ->setType(Type::Int)
+            ->setNullable()
+            ->setPublic();
+        $errorCodeProperty->addGetHook('');
+        $errorCodeProperty->addSetHook('');
 
         $constructor->addPromotedParameter('description')
             ->setPublic()
@@ -277,56 +333,97 @@ class StubCreator
             ->setNullable()
             ->setDefaultValue(null);
 
+        $descriptionProperty = $responseInterface->addProperty('description')
+            ->setType(Type::String)
+            ->setNullable()
+            ->setPublic();
+        $descriptionProperty->addGetHook('');
+        $descriptionProperty->addSetHook('');
+
         $constructor->addPromotedParameter('parameters')
             ->setPublic()
-            ->setType(sprintf('%s\\ResponseParameters', $namespace))
+            ->setType($interfacesNamespace . '\\ResponseParametersInterface')
             ->setNullable()
             ->setDefaultValue(null);
 
-        $response->addImplement($namespace . '\\TypeInterface');
+        $parametersProperty = $responseInterface->addProperty('parameters')
+            ->setType($interfacesNamespace . '\\ResponseParametersInterface')
+            ->setNullable()
+            ->setPublic();
+        $parametersProperty->addGetHook('');
+        $parametersProperty->addSetHook('');
+
+        $response->addImplement($interfacesNamespace . '\\ResponseInterface');
+
+        $responseInterface->addExtend($interfacesNamespace  . '\\TypeInterface');
 
         return [
-            'Response' => $responseFile,
+            'Response' => [
+                'class' => $responseFile,
+                'interface' => $responseInterfaceFile,
+            ],
             'TypeInterface' => $interfaceFile,
         ];
     }
 
     /**
-     * @return array{0: PhpFile[], 1: array<string,Method>}
+     * @return array{
+     *     types: array<string, array{class: PhpFile, interface: PhpFile}>,
+     *     files: array<string,PhpFile>,
+     *     defaultTypeInterface: PhpFile
+     * }
      */
-    private function generateTypes(): array
+    public function generateTypes(): array
     {
         $namespace = $this->namespace . '\\Types';
-        $types = $this->generateDefaultTypes($namespace);
+        $interfaceNamespace = $namespace . '\\Interfaces';
+
+        [
+            'Response' => $responseType,
+            'TypeInterface' => $defaultTypeInterface,
+        ] = $this->generateDefaultTypes($namespace);
+
+        $types = [
+            'Response' => $responseType,
+        ];
 
         $denormalizers = [];
+        $factoryMethods = [];
 
         foreach ($this->schema['types'] as $type) {
             $file = new PhpFile();
             $phpNamespace = $file->addNamespace($namespace);
             $typeClass = $phpNamespace->addClass($type['name']);
 
+            $interfaceFile = new PhpFile();
+            $phpInterfaceNamespace = $interfaceFile->addNamespace($interfaceNamespace);
+            $typeInterface = $phpInterfaceNamespace->addInterface($type['name'] . 'Interface');
+            $typeInterface->addExtend($interfaceNamespace . '\\TypeInterface');
+
             $constructor = $typeClass->addMethod('__construct');
 
             $params = [];
+            $properties = [];
 
             if (isset($type['description'])) {
                 $typeClass->addComment($type['description']);
+                $typeInterface->addComment($type['description']);
             }
 
             if (in_array($type['name'], $this->abstractClasses)) {
                 $typeClass->setAbstract();
 
                 foreach ($this->extendedBy[$type['name']] as $extendedType) {
-                    $typeClass->addComment(sprintf('@see %s', $extendedType));
+                    $typeClass->addComment("@see $extendedType");
+                    $typeInterface->addComment("@see {$extendedType}Interface");
                 }
             }
 
             if (array_key_exists($type['name'], $this->extendedClasses)) {
                 $typeClass->setExtends($namespace . '\\' . $this->extendedClasses[$type['name']]);
-            } else {
-                $typeClass->addImplement($namespace . '\\TypeInterface');
             }
+
+            $typeClass->addImplement($interfaceNamespace . '\\' . $type['name'] . 'Interface');
 
             $arrayTypes = [];
 
@@ -345,11 +442,17 @@ class StubCreator
                 }
 
                 $fieldName = self::toCamelCase($field['name']);
-                $param = (new PromotedParameter($fieldName))->setType($fieldType);
+                $param = new PromotedParameter($fieldName)->setType($fieldType);
+                $property = new Property($fieldName)->setType($fieldType)->setPublic();
+                $property->addSetHook('');
+                $property->addGetHook('');
 
                 if ($field['optional']) {
                     $param->setNullable();
                     $param->setDefaultValue(null);
+
+                    $property->setNullable();
+                    $property->setValue(null);
 
                     if ($fieldComment !== '') {
                         $fieldComment .= '|null';
@@ -357,14 +460,20 @@ class StubCreator
                 } else {
                     if (isset($field['default'])) {
                         $param->setDefaultValue($field['default']);
+                        $property->setValue($field['default']);
                     }
                 }
 
                 if ($fieldComment !== '') {
                     $fieldComment .= sprintf(' $%s %s', $fieldName, $field['description']);
+
+                    $property->addComment(
+                        str_replace('@param', '@var', $fieldComment)
+                    );
                 }
 
                 $params[] = [$param, $fieldComment];
+                $properties[] = $property;
             }
 
             usort($params, function ($a, $b) {
@@ -384,16 +493,76 @@ class StubCreator
             $constructor->setParameters($constructorParams);
             $constructor->setComment($constructorComment);
 
-            $types[$type['name']] = $file;
+            $typeInterface->setProperties($properties);
+
+            $types[$type['name']] = [
+                'class' => $file,
+                'interface' => $interfaceFile,
+            ];
 
             $denormalizers[$type['name']] = $this->generateDenormalizeTypeMethod(
-                array_map(fn ($a) => $a[0], $params),
+                $constructorParams,
                 $type['name'],
                 $arrayTypes
             );
+
+            if (!in_array($type['name'], $this->abstractClasses)) {
+                $factoryMethods[$type['name']] = $this->generateFactoryMethod(
+                    $constructorParams,
+                    $type['name'],
+                );
+            }
+
+            if (count($constructorParams) === 0) {
+                $typeClass->removeMethod('__construct');
+            }
         }
 
-        return [$types, $denormalizers];
+        return [
+            'types' => $types,
+            'files' => [
+                ...$this->generateApi($denormalizers),
+                ...$this->generateFactory($factoryMethods),
+            ],
+            'defaultTypeInterface' => $defaultTypeInterface,
+        ];
+    }
+
+    /**
+     * @param array<string,Method> $factoryMethods
+     *
+     * @return array<string,PhpFile>
+     */
+    private function generateFactory(array $factoryMethods): array
+    {
+        $file = new PhpFile();
+        $namespace = $file->addNamespace($this->namespace);
+
+        $factoryClass = $namespace->addClass('Factory');
+
+        $factoryInterfaceFile = new PhpFile();
+        $interfaceNamespace = $factoryInterfaceFile->addNamespace($this->namespace);
+        $factoryInterface = $interfaceNamespace->addInterface('FactoryInterface');
+
+        $factoryClass->addImplement($this->namespace . '\\FactoryInterface');
+
+        $factoryClass->setMethods($factoryMethods);
+        $factoryInterface->setMethods($factoryMethods);
+
+        foreach ($factoryMethods as $typeName => $method) {
+            $fullName = $this->namespace . '\\Types\\' . $typeName;
+            $fullInterfaceName = $this->namespace . '\\Types\\Interfaces\\' . $typeName . 'Interface';
+
+            $namespace->addUse($fullName);
+            $namespace->addUse($fullInterfaceName);
+
+            $interfaceNamespace->addUse($fullInterfaceName);
+        }
+
+        return [
+            'Factory' => $file,
+            'FactoryInterface' => $factoryInterfaceFile,
+        ];
     }
 
     /**
@@ -506,7 +675,7 @@ class StubCreator
             foreach ($fields as $field) {
                 [
                     'types' => $types,
-                    'comments' => $comment
+                    'comments' => $comment,
                 ] = $this->parseApiFieldTypes($field['types'], $phpNamespace, $apiInterfaceNamespace);
 
                 $fieldName = self::toCamelCase($field['name']);
@@ -542,7 +711,7 @@ class StubCreator
             }
 
             [
-                'comments' => $returnComment
+                'comments' => $returnComment,
             ] = $this->parseApiFieldTypes($method['return_types'], $phpNamespace, $apiInterfaceNamespace);
 
             $expectedReturnTypes = array_map(
@@ -571,12 +740,12 @@ class StubCreator
             [$expectedReturnType, $isArray] = $expectedReturnTypes[0];
 
             $body = <<<'BODY'
-                    return $this->doRequest(
-                        method: '%s',
-                        args: get_defined_vars(),
-                        returnType: %s,%s
-                    );
-                    BODY;
+                return $this->doRequest(
+                    method: '%s',
+                    args: get_defined_vars(),
+                    returnType: %s,%s
+                );
+                BODY;
 
             $returnType = Validators::isBuiltinType($expectedReturnType)
                 ? "'$expectedReturnType'"
@@ -600,7 +769,7 @@ class StubCreator
                 if (Validators::isBuiltinType($expectedReturnType)) {
                     $functionReturnType = $expectedReturnType;
                 } else {
-                    $functionReturnType = $this->namespace . '\\Types\\' . $expectedReturnType;
+                    $functionReturnType = "$this->namespace\\Types\\Interfaces\\$expectedReturnType";
                 }
             }
 
@@ -626,17 +795,67 @@ class StubCreator
         ];
     }
 
+    private function generateFactoryMethod(
+        array $params,
+        string $type,
+    ): Method {
+        $factoryMethod = new Method(sprintf('make%s', $type));
+        $factoryMethod->setPublic();
+        $factoryMethod->setReturnType($this->namespace . '\\Types\\Interfaces\\' . $type . 'Interface');
+
+        if (count($params) === 0) {
+            $factoryMethod->addBody(
+                sprintf('return new %s;', $type)
+            );
+
+            return $factoryMethod;
+        }
+
+        $factoryMethod->addBody(sprintf('return new %s(', $type));
+
+        /** @var Parameter $param */
+        foreach ($params as $param) {
+            $factoryMethod->addBody(sprintf(
+                '    %s: $%s,',
+                $param->getName(),
+                $param->getName(),
+            ));
+        }
+
+        $factoryMethod->addBody(');');
+
+        $factoryMethod->setParameters(array_map(
+            function (PromotedParameter $promoted) {
+                $param = new Parameter($promoted->getName())
+                    ->setType($promoted->getType())
+                    ->setNullable($promoted->isNullable())
+                    ->setComment($promoted->getComment())
+                    ->setAttributes($promoted->getAttributes())
+                    ->setReference($promoted->isReference());
+
+                if ($param->hasDefaultValue()) {
+                    $param->setDefaultValue($promoted->getDefaultValue());
+                }
+
+                return $param;
+            },
+            $params
+        ));
+
+        return $factoryMethod;
+    }
+
     /**
      * @param array<string,array{0: int, 1: string}> $arrayTypes
      */
     private function generateDenormalizeTypeMethod(
         array $params,
         string $type,
-        array $arrayTypes
+        array $arrayTypes,
     ): Method {
         $denormalizeTypeMethod = new Method(sprintf('denormalize%s', $type));
         $denormalizeTypeMethod->setPublic();
-        $denormalizeTypeMethod->setReturnType($this->namespace . '\\Types\\' . $type);
+        $denormalizeTypeMethod->setReturnType($this->namespace . '\\Types\\Interfaces\\' . $type . 'Interface');
         $denormalizeTypeMethod
             ->addParameter('data')
             ->setType(Type::Array);
@@ -662,7 +881,7 @@ class StubCreator
 
         if (count($params) === 0) {
             $denormalizeTypeMethod->addBody(
-                sprintf('return new %s();', $type)
+                sprintf('return $this->factory->make%s();', $type)
             );
 
             return $denormalizeTypeMethod;
@@ -706,7 +925,8 @@ class StubCreator
             );
         }
 
-        $denormalizeTypeMethod->addBody(sprintf('return new %s(', $type));
+        //        $denormalizeTypeMethod->addBody(sprintf('return new %s(', $type));
+        $denormalizeTypeMethod->addBody(sprintf('return $this->factory->make%s(', $type));
 
         /** @var Parameter $param */
         foreach ($params as $param) {
@@ -733,6 +953,7 @@ class StubCreator
             $paramTypeBase = $paramTypeBase[count($paramTypeBase) - 1];
             $paramTypeBase = explode('|', $paramTypeBase);
             $paramTypeBase = $paramTypeBase[0];
+            $paramTypeBase = str_replace('Interface', '', $paramTypeBase);
 
             $handlingArray = $paramTypeBase === 'array';
 
@@ -740,18 +961,18 @@ class StubCreator
                 [$arrayLevel, $paramTypeBase] = $arrayTypes[$snakeParamName];
             }
 
-            if (!Validators::isBuiltinType($paramTypeBase)) {
+            if (!Validators::isBuiltinType($paramTypeBase) && $paramTypeBase !== 'InputFile') {
                 if ($defaultValue !== null) {
                     if ($handlingArray) {
                         if ($arrayLevel === 1) {
                             $value = <<<VALUE
-                            ($value ?? null) !== null
+                            isset($value)
                                     ? array_map(fn (array \$item) => \$this->denormalize{$paramTypeBase}(\$item), $value)
                                     : null
                             VALUE;
                         } elseif ($arrayLevel === 2) {
                             $value = <<<VALUE
-                            ($value ?? null) !== null
+                            isset($value)
                                     ? array_map(
                                         fn (array \$item0) => array_map(
                                             fn (array \$item1) => \$this->denormalize{$paramTypeBase}(\$item1),
@@ -766,7 +987,7 @@ class StubCreator
                         }
                     } else {
                         $value = <<<VALUE
-                        ($value ?? null) !== null
+                        isset($value)
                                 ? \$this->denormalize{$paramTypeBase}($value)
                                 : null
                         VALUE;
@@ -829,7 +1050,7 @@ class StubCreator
         $file = new PhpFile();
 
         $phpNamespace = $file->addNamespace($this->namespace);
-        $phpNamespace->addUse(sprintf('%s\\Types\\Response', $this->namespace));
+        $phpNamespace->addUse("$this->namespace\\Types\\Interfaces\\ResponseInterface");
 
         $interface = $phpNamespace->addInterface('ClientInterface');
 
@@ -837,7 +1058,7 @@ class StubCreator
 
         $method->addParameter('method')->setType(Type::String);
         $method->addParameter('data')->setType(Type::Array);
-        $method->setReturnType(sprintf('%s\\Types\\Response', $this->namespace));
+        $method->setReturnType("$this->namespace\\Types\\Interfaces\\ResponseInterface");
 
         return [$file, $interface];
     }
@@ -876,7 +1097,7 @@ class StubCreator
         $file = new PhpFile();
 
         $phpNamespace = $file->addNamespace($this->namespace);
-        $phpNamespace->addUse($this->namespace . '\\Types\\TypeInterface');
+        $phpNamespace->addUse($this->namespace . '\\Types\\Interfaces\\TypeInterface');
 
         $class = $phpNamespace->addClass('Serializer');
         $class->addImplement($this->namespace . '\\SerializerInterface');
@@ -907,7 +1128,7 @@ class StubCreator
         $denormalizeMethod->setReturnType('mixed');
         $denormalizeMethod->setPublic();
         $denormalizeMethod->setBody(<<<'BODY'
-            if (!class_exists($type) || !is_subclass_of($type, TypeInterface::class)) {
+            if (!interface_exists($type) || !is_subclass_of($type, TypeInterface::class)) {
                 throw new \UnexpectedValueException(sprintf('Failed to decode response to the expected type: %s', $type));
             }
             
@@ -922,11 +1143,10 @@ class StubCreator
         $denormalizeTypeMethod = $class->addMethod('denormalizeType');
         $denormalizeTypeMethod->addParameter('data')->setType(Type::Array);
         $denormalizeTypeMethod->addParameter('type')->setType(Type::String);
-        $denormalizeTypeMethod->setReturnType($this->namespace . '\\Types\\TypeInterface');
+        $denormalizeTypeMethod->setReturnType($this->namespace . '\\Types\\Interfaces\\TypeInterface');
         $denormalizeTypeMethod->setPrivate();
         $denormalizeTypeMethod->addBody('
-        return match ($type) {
-    ');
+        return match ($type) {');
 
         foreach ($denormalizers as $type => $denormalizer) {
             if (in_array($type, $this->abstractClasses)) {
@@ -934,13 +1154,11 @@ class StubCreator
                 continue;
             }
 
-            $denormalizeTypeMethod->addBody(sprintf(
-                '        %s::class => $this->denormalize%s($data),',
-                $type,
-                $type
-            ));
+            $denormalizeTypeMethod->addBody(
+                "{$type}Interface::class => \$this->denormalize{$type}(\$data),"
+            );
 
-            $phpNamespace->addUse($this->namespace . '\\Types\\' . $type);
+            $phpNamespace->addUse("$this->namespace\\Types\\Interfaces\\{$type}Interface");
         }
 
         $denormalizeTypeMethod->addBody(
@@ -959,7 +1177,7 @@ class StubCreator
         $normalizeMethod->addParameter('data')->setType('array');
         $normalizeMethod->setReturnType('array');
         $normalizeMethod->setPrivate();
-        $normalizeMethod->setBody('
+        $normalizeMethod->setBody(<<<'PHP'
             $result = [];
             
             foreach ($data as $key => $value) {
@@ -981,7 +1199,8 @@ class StubCreator
             }
             
             return $result;
-        ');
+            PHP
+        );
 
         $camelToSnakeMethod = $class->addMethod('camelToSnake');
         $camelToSnakeMethod->addParameter('input')->setType('string');
@@ -991,22 +1210,20 @@ class StubCreator
             return strtolower(preg_replace(\'/[A-Z]/\', \'_$0\', lcfirst($input)));
         ');
 
+        $constructor = new Method('__construct')->setPublic();
+        $constructor->addPromotedParameter('factory')
+            ->setType($this->namespace . '\\FactoryInterface')
+            ->setDefaultValue(new Literal('new Factory'))
+            ->setReadOnly()
+            ->setPrivate();
+
+        $class->setMethods(
+            array_merge(
+                [$constructor],
+                $class->getMethods()
+            )
+        );
+
         return [$file, $class];
-    }
-
-    /**
-     * @return array{
-     *     types: PhpFile[],
-     *     files: array<string,PhpFile>,
-     * }
-     */
-    public function generateCode(): array
-    {
-        [$types, $typesDenormalizers] = $this->generateTypes();
-
-        return [
-            'types' => $types,
-            'files' => $this->generateApi($typesDenormalizers),
-        ];
     }
 }

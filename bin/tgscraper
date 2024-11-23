@@ -20,7 +20,7 @@ foreach ($autoloadFiles as $autoloadFile) {
     }
 }
 
-$application = new Application('TGScraper', InstalledVersions::getVersion('sysbot/tgscraper'));
+$application = new Application('TGScraper', InstalledVersions::getVersion('phenogram/scraper'));
 
 $application->add(new CreateStubsCommand());
 $application->add(new ExportSchemaCommand());
@@ -30,6 +30,8 @@ try {
     $exitCode = $application->run();
 } catch (Throwable $e) {
     echo $e->getMessage() . PHP_EOL;
+
+    dump($e);
 }
 
 exit($exitCode ?? 1);

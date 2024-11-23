@@ -204,7 +204,7 @@ class SchemaExtractor
         string $description,
         ?SimpleHtmlDomNodeInterface $unparsedFields,
         array $extendedBy,
-        bool $isMethod
+        bool $isMethod,
     ): array {
         $fields = self::parseFields($unparsedFields, $isMethod);
         $result = [

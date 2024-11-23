@@ -13,8 +13,8 @@ trait Common
         OutputInterface $output,
         string $destination,
         string $data,
-        string $prefix = null,
-        bool $log = true
+        ?string $prefix = null,
+        bool $log = true,
     ): int {
         $result = file_put_contents($destination, $data);
         if (false === $result) {
