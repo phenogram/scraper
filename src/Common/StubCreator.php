@@ -485,6 +485,7 @@ class StubCreator
 
                 $constructorParams = $redefinedType::getConstructorParams();
                 $constructorComment = $redefinedType::getConstructorComment();
+                $properties = $redefinedType::getInterfaceProperties();
             } else {
                 $constructorParams = array_map(fn ($a) => $a[0], $params);
                 $constructorComment = implode("\n", array_map(fn ($a) => $a[1], $params));
@@ -1098,6 +1099,7 @@ class StubCreator
 
         $phpNamespace = $file->addNamespace($this->namespace);
         $phpNamespace->addUse($this->namespace . '\\Types\\Interfaces\\TypeInterface');
+        $phpNamespace->addUse($this->namespace . '\\Types\\Interfaces\\InputFileInterface');
 
         $class = $phpNamespace->addClass('Serializer');
         $class->addImplement($this->namespace . '\\SerializerInterface');
@@ -1187,7 +1189,7 @@ class StubCreator
                 
                 $snakeKey = $this->camelToSnake($key);
                 
-                if ($value instanceof TypeInterface && !$value instanceof InputFile) {
+                if ($value instanceof TypeInterface && !$value instanceof InputFileInterface) {
                     $value = get_object_vars($value);
                 }
                 

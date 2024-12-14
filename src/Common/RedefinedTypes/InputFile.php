@@ -6,6 +6,7 @@ namespace TgScraper\Common\RedefinedTypes;
 
 use Nette\PhpGenerator\Parameter;
 use Nette\PhpGenerator\PromotedParameter;
+use Nette\PhpGenerator\Property;
 use Nette\PhpGenerator\Type;
 
 class InputFile implements RedefinedTypeInterface
@@ -23,5 +24,19 @@ class InputFile implements RedefinedTypeInterface
     public static function getConstructorComment(): string
     {
         return '';
+    }
+
+    /**
+     * @return array<Property>
+     */
+    public static function getInterfaceProperties(): array
+    {
+        $filePath = new Property('filePath')->setType(Type::String)->setPublic();
+        $filePath->addSetHook('');
+        $filePath->addGetHook('');
+
+        return [
+            $filePath,
+        ];
     }
 }
