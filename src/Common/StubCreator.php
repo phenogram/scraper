@@ -108,13 +108,14 @@ class StubCreator
         $redefinedTypesNamespace = 'TgScraper\Common\RedefinedTypes';
 
         foreach ($this->schema['types'] as $type) {
-            // replace class constructor is this type exist:
-            if (class_exists($redefinedTypesNamespace . '\\' . $type['name'])) {
-                $redefinedType = $redefinedTypesNamespace . '\\' . $type['name'];
+            $redefinedType = $redefinedTypesNamespace . '\\' . $type['name'];
+            if (class_exists($redefinedType) && is_subclass_of($redefinedType, RedefinedTypeInterface::class)) {
+                $this->redefinedTypes[$type['name']] = $redefinedType;
+            }
 
-                if (is_subclass_of($redefinedType, RedefinedTypeInterface::class)) {
-                    $this->redefinedTypes[$type['name']] = $redefinedType;
-                }
+            $redefinedTypeInterface = $redefinedType . 'Interface';
+            if (class_exists($redefinedTypeInterface) && is_subclass_of($redefinedTypeInterface, RedefinedTypeInterface::class)) {
+                $this->redefinedTypes[$type['name']] = $redefinedTypeInterface;
             }
         }
     }
@@ -368,7 +369,7 @@ class StubCreator
 
     /**
      * @return array{
-     *     types: array<string, array{class: PhpFile, interface: PhpFile}>,
+     *     types: array<string, array{class: ?PhpFile, interface: PhpFile}>,
      *     files: array<string,PhpFile>,
      *     defaultTypeInterface: PhpFile
      * }
@@ -391,15 +392,26 @@ class StubCreator
         $factoryMethods = [];
 
         foreach ($this->schema['types'] as $type) {
-            $file = new PhpFile();
-            $phpNamespace = $file->addNamespace($namespace);
-            $typeClass = $phpNamespace->addClass($type['name']);
-
             $interfaceFile = new PhpFile();
             $phpInterfaceNamespace = $interfaceFile->addNamespace($interfaceNamespace);
             $typeInterface = $phpInterfaceNamespace->addInterface($type['name'] . 'Interface');
             $typeInterface->addExtend($interfaceNamespace . '\\TypeInterface');
 
+            if ($type['name'] === 'InputFile') {
+                $typeInterface->addComment($type['description']);
+
+                $types[$type['name']] = [
+                    'class' => null,
+                    'interface' => $interfaceFile,
+                ];
+
+                continue;
+            }
+
+            $file = new PhpFile();
+            $phpNamespace = $file->addNamespace($namespace);
+
+            $typeClass = $phpNamespace->addClass($type['name']);
             $constructor = $typeClass->addMethod('__construct');
 
             $params = [];
@@ -444,8 +456,8 @@ class StubCreator
                 $fieldName = self::toCamelCase($field['name']);
                 $param = new PromotedParameter($fieldName)->setType($fieldType);
                 $property = new Property($fieldName)->setType($fieldType)->setPublic();
-                $property->addSetHook('');
                 $property->addGetHook('');
+                $property->addSetHook('');
 
                 if ($field['optional']) {
                     $param->setNullable();
@@ -483,18 +495,23 @@ class StubCreator
             if (isset($this->redefinedTypes[$type['name']])) {
                 $redefinedType = $this->redefinedTypes[$type['name']];
 
-                $constructorParams = $redefinedType::getConstructorParams();
-                $constructorComment = $redefinedType::getConstructorComment();
-                $properties = $redefinedType::getInterfaceProperties();
+                dd('Not implemented yet', $redefinedType);
             } else {
                 $constructorParams = array_map(fn ($a) => $a[0], $params);
                 $constructorComment = implode("\n", array_map(fn ($a) => $a[1], $params));
             }
 
-            $constructor->setParameters($constructorParams);
-            $constructor->setComment($constructorComment);
+            if (count($constructorParams) > 0) {
+                $constructor->setParameters($constructorParams);
+            }
 
-            $typeInterface->setProperties($properties);
+            if ($constructorComment !== '') {
+                $constructor->addComment($constructorComment);
+            }
+
+            if (count($properties) > 0) {
+                $typeInterface->setProperties($properties);
+            }
 
             $types[$type['name']] = [
                 'class' => $file,
@@ -1227,5 +1244,480 @@ class StubCreator
         );
 
         return [$file, $class];
+    }
+
+    /**
+     * Generates test factories for concrete types using Faker.
+     *
+     * @return array<string, PhpFile> Array of generated factory files keyed by class name (e.g., 'UserFactory').
+     */
+    public function generateTestFactories(): array
+    {
+        $factoryNamespaceStr = $this->namespace . '\\Factories';
+        $typesNamespaceStr = $this->namespace . '\\Types';
+        $interfacesNamespaceStr = $typesNamespaceStr . '\\Interfaces';
+
+        $generatedFactories = [];
+
+        // 1. Generate AbstractFactory
+        $abstractFactoryFile = new PhpFile();
+        $abstractFactoryNamespace = $abstractFactoryFile->addNamespace($factoryNamespaceStr);
+        $abstractFactoryNamespace->addUse('\Faker\Generator');
+
+        $abstractFactoryClass = $abstractFactoryNamespace->addClass('AbstractFactory')
+            ->setAbstract();
+
+        $abstractFactoryClass->addProperty('faker')
+            ->setPrivate()
+            ->setStatic()
+            ->setType('\Faker\Generator');
+
+        $fakeMethod = $abstractFactoryClass->addMethod('fake')
+            ->setProtected()
+            ->setStatic()
+            ->setReturnType('\Faker\Generator');
+
+        $fakeMethod->addBody(
+            <<<'PHP'
+            if (!isset(static::$faker)) {
+                static::$faker = \Faker\Factory::create();
+            }
+            return static::$faker;
+            PHP
+        );
+
+        $abstractFactoryNamespace->addUse($this->namespace . '\\FactoryInterface');
+
+        $abstractFactoryClass->addProperty('factory')
+            ->setPrivate()
+            ->setStatic()
+            ->setType($this->namespace . '\\FactoryInterface');
+
+        $factoryMethod = $abstractFactoryClass->addMethod('factory')
+            ->setProtected()
+            ->setStatic()
+            ->setReturnType($this->namespace . '\\FactoryInterface');
+
+        $factoryMethod->addBody(
+            <<<'PHP'
+            if (!isset(static::$factory)) {
+                static::$factory = new \Phenogram\Bindings\Factory();
+            }
+            return static::$factory;
+            PHP
+        );
+
+        $setFactoryMethod = $abstractFactoryClass->addMethod('setFactory')
+            ->setPublic()
+            ->setStatic()
+            ->setReturnType('void');
+
+        $setFactoryMethod->addParameter('factory')
+            ->setType($this->namespace . '\\FactoryInterface');
+
+        $setFactoryMethod->addBody(
+            <<<'PHP'
+            if (isset(static::$factory)) {
+                throw new \RuntimeException('Factory already set');
+            }
+            
+            static::$factory = $factory;
+            PHP
+        );
+
+        $generatedFactories['AbstractFactory'] = $abstractFactoryFile;
+
+        // 2. Generate Factories for each concrete type
+        foreach ($this->schema['types'] as $type) {
+            $typeName = $type['name'];
+
+            // Skip abstract types and InputFile for automatic factory generation
+            if (in_array($typeName, $this->abstractClasses) || $typeName === 'InputFile') {
+                // Consider logging this skip if necessary
+                continue;
+            }
+
+            // Skip types that don't have fields (like marker interfaces, although unlikely in TG API)
+            // Actually, keep them, they might just have an empty constructor, which is fine.
+            // if (empty($type['fields'])) {
+            //     continue;
+            // }
+
+            $factoryClassName = $typeName . 'Factory';
+            $factoryFile = new PhpFile();
+            $factoryNamespace = $factoryFile->addNamespace($factoryNamespaceStr);
+
+            // Add necessary use statements
+            $factoryNamespace->addUse($typesNamespaceStr . '\\' . $typeName); // Concrete class
+            $factoryNamespace->addUse($interfacesNamespaceStr . '\\' . $typeName . 'Interface'); // Interface
+            $factoryNamespace->addUse($factoryNamespaceStr . '\\AbstractFactory'); // Base factory
+
+            // Add uses for nested type factories
+            $nestedFactoryUses = [];
+            foreach ($type['fields'] ?? [] as $field) {
+                foreach ($field['types'] as $fieldTypeStr) {
+                    [$baseType, $isArray] = $this->getBaseTypeAndArrayInfo($fieldTypeStr);
+                    if (!Validators::isBuiltinType($baseType) && $baseType !== 'InputFile' && !in_array($baseType, $this->abstractClasses)) {
+                        $nestedFactoryClass = $baseType . 'Factory';
+                        if ($nestedFactoryClass !== $factoryClassName) { // Avoid self-import
+                            $nestedFactoryUses[$baseType] = $factoryNamespaceStr . '\\' . $nestedFactoryClass;
+                        }
+
+                        // Also need the interface for type hints
+                        $nestedFactoryUses[$baseType . 'Interface'] = $interfacesNamespaceStr . '\\' . $baseType . 'Interface';
+                    }
+                }
+            }
+
+            foreach ($nestedFactoryUses as $alias => $use) {
+                // Check if it's already used before adding
+                if (!isset($factoryNamespace->getUses()[$alias === $use ? basename(str_replace('\\', '/', $use)) : $alias])) {
+                    $factoryNamespace->addUse($use, $alias);
+                }
+            }
+
+            $factoryClass = $factoryNamespace
+                ->addClass($factoryClassName)
+                ->setExtends($factoryNamespaceStr . '\\AbstractFactory');
+
+            $makeMethod = $factoryClass->addMethod('make')
+                ->setStatic()
+                ->setPublic()
+                ->setReturnType($interfacesNamespaceStr . '\\' . $typeName . 'Interface');
+
+            $makeMethod->addComment("Creates a new {$typeName} instance with default fake data.");
+            $makeMethod->addComment(''); // Empty line
+
+            $constructorParams = []; // To store ['name' => $camelCaseName, 'info' => $field]
+
+            // Add parameters to make() method
+            foreach ($type['fields'] ?? [] as $field) {
+                $paramName = self::toCamelCase($field['name']);
+                $constructorParams[] = ['name' => $paramName, 'info' => $field];
+
+                // Determine parameter type hint (use interface for objects)
+                $paramTypes = [];
+                $isNullable = $field['optional']; // If the field is optional, the param must be nullable
+                $onlyObjectType = null;
+                $hasObject = false;
+                $hasBuiltin = false;
+
+                foreach ($field['types'] as $fieldTypeStr) {
+                    [$baseType, $isArray] = $this->getBaseTypeAndArrayInfo($fieldTypeStr);
+
+                    if ($isArray) {
+                        $paramTypes[] = 'array';
+                        $hasBuiltin = true; // Treat array as built-in for simplicity here
+                    } elseif (!Validators::isBuiltinType($baseType)) {
+                        if ($baseType !== 'InputFile') { // Skip InputFile type hint
+                            $paramTypes[] = '\\' . $interfacesNamespaceStr . '\\' . $baseType . 'Interface';
+                            $onlyObjectType = '\\' . $interfacesNamespaceStr . '\\' . $baseType . 'Interface';
+                            $hasObject = true;
+                        } else {
+                            $paramTypes[] = 'mixed'; // Use mixed for InputFile params
+                            $hasBuiltin = true;
+                        }
+                    } else {
+                        $paramTypes[] = $baseType;
+                        $hasBuiltin = true;
+                    }
+                }
+
+                $paramTypes = array_unique($paramTypes);
+
+                // Simplify type hint: if only one object type and no built-ins, use it. Otherwise use mixed or specific built-in.
+                $paramTypeHint = null;
+                if (count($paramTypes) === 1) {
+                    $paramTypeHint = $paramTypes[0];
+                } elseif ($hasObject && !$hasBuiltin && count($paramTypes) === 1) {
+                    $paramTypeHint = $onlyObjectType;
+                } elseif (count($paramTypes) > 1) {
+                    $paramTypeHint = implode('|', $paramTypes); // PHP 8 union types
+                    if (str_contains($paramTypeHint, 'mixed')) {
+                        $paramTypeHint = 'mixed'; // Prefer mixed if it's part of the union
+                    }
+                } else {
+                    $paramTypeHint = 'mixed'; // Fallback
+                }
+
+                $parameter = $makeMethod->addParameter($paramName)
+                    ->setType($paramTypeHint)
+                    ->setNullable($isNullable) // Optional fields are nullable
+                    ->setDefaultValue(null);
+
+                $makeMethod->addComment("@param {$paramTypeHint}|null \${$paramName} Optional. " . strip_tags($field['description']));
+            }
+
+            // Generate make() method body
+            $bodyLines = ["return self::factory()->make{$typeName}("];
+            foreach ($constructorParams as $paramData) {
+                $paramName = $paramData['name'];
+                $field = $paramData['info'];
+                $fieldName = $field['name']; // snake_case name for fake value generation hint
+
+                $fakeValueExpression = $this->generateFakeValueExpression($typeName, $fieldName, $field, $factoryNamespaceStr, $interfacesNamespaceStr);
+
+                // Wrap optional fields with `$paramName ?? ...`
+                // Handle default values specified in the schema? Let's prioritize Faker.
+                // The example factories sometimes do `?? self::fake()->boolean() ? null : ...` for non-required optional fields. Let's implement that.
+
+                if ($field['optional']) {
+                    $bodyLines[] = "    {$paramName}: \${$paramName},";
+                } else {
+                    // Required field: use provided value or generate fake one
+                    $bodyLines[] = "    {$paramName}: \${$paramName} ?? {$fakeValueExpression},";
+                }
+            }
+
+            $bodyLines[] = ');';
+
+            $makeMethod->setBody(implode("\n", $bodyLines));
+
+            $generatedFactories[$factoryClassName] = $factoryFile;
+        }
+
+        return $generatedFactories;
+    }
+
+    /**
+     * Helper to get base type and array status.
+     * e.g., "Array<User|Chat>" -> ["User|Chat", true, 1]
+     * e.g., "Array<Array<string>>" -> ["string", true, 2]
+     * e.g., "int" -> ["int", false, 0].
+     */
+    private function getBaseTypeAndArrayInfo(string $type): array
+    {
+        $isArray = false;
+        $arrayLevel = 0;
+        $baseType = $type;
+
+        while (str_starts_with($baseType, 'Array<') && str_ends_with($baseType, '>')) {
+            $isArray = true;
+            ++$arrayLevel;
+            $baseType = substr($baseType, 6, -1);
+        }
+
+        return [$baseType, $isArray, $arrayLevel];
+    }
+
+    /**
+     * Generates a PHP string representing the Faker call for a given field.
+     */
+    private function generateFakeValueExpression(
+        string $containingTypeName,
+        string $fieldName, // snake_case
+        array $fieldInfo,
+        string $factoryNamespace,
+        string $interfacesNamespace,
+    ): string {
+        $types = $fieldInfo['types'];
+        $description = strip_tags($fieldInfo['description']);
+        $isOptional = $fieldInfo['optional'];
+
+        // Prioritize the first type for simplicity, but consider others for hints
+        $mainTypeStr = $types[0];
+        [$baseType, $isArray, $arrayLevel] = $this->getBaseTypeAndArrayInfo($mainTypeStr);
+
+        // Handle simple array case first
+        if ($isArray) {
+            // Determine inner type for factory call or basic faker generation
+            [$innerBaseType, $innerIsArray] = $this->getBaseTypeAndArrayInfo($baseType); // Handles nested arrays
+
+            if (!Validators::isBuiltinType($innerBaseType) && $innerBaseType !== 'InputFile' && !in_array($innerBaseType, $this->abstractClasses)) {
+                // Array of objects: Call the corresponding factory
+                $innerFactoryName = $innerBaseType . 'Factory';
+                $factoryCall = "{$innerFactoryName}::make()";
+
+                // Handle nested arrays of objects
+                for ($i = 1; $i < $arrayLevel; ++$i) {
+                    $factoryCall = "array_map(fn() => {$factoryCall}, range(0, self::fake()->numberBetween(0, 1)))"; // Nested arrays smaller
+                }
+
+                // Generate 0 to 3 items
+                return "array_map(fn() => {$factoryCall}, range(0, self::fake()->numberBetween(0, 2)))";
+            } else {
+                // Array of built-in types or InputFile
+                switch ($innerBaseType) {
+                    case 'int':
+                        return 'self::fake()->randomElements(range(1, 100), self::fake()->numberBetween(1, 5))';
+                    case 'string':
+                        // Check field name for hints
+                        if (str_contains($fieldName, 'emoji')) {
+                            return 'self::fake()->randomElements(["👍", "❤️", "😂", "🚀"], self::fake()->numberBetween(1, 3))';
+                        }
+
+                        if (str_contains($fieldName, 'entities')) { // Special case for Message entities
+                            return '[]'; // Default to empty array, too complex to fake well automatically
+                        }
+
+                        if (str_contains($fieldName, 'photo')) { // e.g. photo sizes
+                            return '[]'; // Default to empty array
+                        }
+
+                        return 'self::fake()->words(self::fake()->numberBetween(1, 5))';
+                    case 'bool':
+                        return '[self::fake()->boolean(), self::fake()->boolean()]';
+                    case 'float':
+                        return '[self::fake()->randomFloat(2), self::fake()->randomFloat(2)]';
+                    default: // InputFile, mixed, etc.
+                        return '[]'; // Sensible default for arrays of complex/unknown types
+                }
+            }
+        }
+
+        // Handle non-array types
+        if (!Validators::isBuiltinType($baseType)) {
+            // Object type
+            if ($baseType === 'InputFile') {
+                // InputFile needs special handling - often represented as string ('attach://<name>') or resource
+                return "'attach://' . self::fake()->word . '.txt'";
+            }
+
+            if (in_array($baseType, $this->abstractClasses)) {
+                // Cannot directly instantiate abstract classes via factory easily
+                // Maybe return null if optional, otherwise throw error or return placeholder?
+                // For now, let's return a string placeholder, assuming it might be optional or handled manually
+                return "'[Abstract type: {$baseType}]'";
+            }
+
+            // Concrete object type: Call its factory
+            $factoryName = $baseType . 'Factory';
+
+            return "{$factoryName}::make()";
+        }
+
+        // Handle built-in types with Faker, using field name hints
+        switch ($baseType) {
+            case 'int':
+            case 'Integer': // Just in case schema uses this sometimes
+                if ($fieldName === 'date' || str_ends_with($fieldName, '_date') || $fieldName === 'until_date') {
+                    return 'self::fake()->unixTime()';
+                }
+
+                if ($fieldName === 'id' || str_ends_with($fieldName, '_id')) {
+                    // Generate positive IDs, maybe higher numbers
+                    return 'self::fake()->numberBetween(100000, 999999999)';
+                }
+
+                if ($fieldName === 'offset' || $fieldName === 'length') {
+                    return 'self::fake()->numberBetween(0, 100)';
+                }
+
+                if ($fieldName === 'width' || $fieldName === 'height' || $fieldName === 'duration') {
+                    return 'self::fake()->numberBetween(10, 1000)';
+                }
+
+                if ($fieldName === 'limit') {
+                    return 'self::fake()->numberBetween(1, 100)';
+                }
+
+                return 'self::fake()->randomNumber()';
+
+            case 'string':
+            case 'String':
+                if ($fieldName === 'type' || $fieldName === 'status') {
+                    // Try to find enum values in description (simple check)
+                    if (preg_match('/must be one of (.+)/i', $description, $matches)) {
+                        $options = array_map('trim', explode(',', str_replace(['“', '”', '`', "'"], '', $matches[1])));
+                        $options = array_filter($options);
+                        if (count($options) > 0) {
+                            // Need to format as PHP array string
+                            $optionsStr = implode(', ', array_map(fn ($s) => "'$s'", $options));
+
+                            return "self::fake()->randomElement([{$optionsStr}])";
+                        }
+                    }
+
+                    // Fallback for common types/statuses
+                    if ($fieldName === 'type' && $containingTypeName === 'Chat') {
+                        return "self::fake()->randomElement(['private', 'group', 'supergroup', 'channel'])";
+                    }
+
+                    if ($fieldName === 'status' && str_starts_with($containingTypeName, 'ChatMember')) {
+                        return "self::fake()->randomElement(['creator', 'administrator', 'member', 'restricted', 'left', 'kicked'])";
+                    }
+
+                    if ($fieldName === 'type' && $containingTypeName === 'MessageEntity') {
+                        return "self::fake()->randomElement(['mention', 'hashtag', 'cashtag', 'bot_command', 'url', 'email', 'phone_number', 'bold', 'italic', 'underline', 'strikethrough', 'code', 'pre', 'text_link', 'text_mention', 'custom_emoji'])";
+                    }
+
+                    return 'self::fake()->word()'; // Fallback
+                }
+
+                if ($fieldName === 'id' || str_ends_with($fieldName, '_id')) { // String IDs like custom_emoji_id
+                    return 'self::fake()->bothify(\'?#?#?#?#?#?#?#???\')';
+                }
+
+                if ($fieldName === 'username') {
+                    return 'self::fake()->userName()';
+                }
+
+                if ($fieldName === 'first_name') {
+                    return 'self::fake()->firstName()';
+                }
+
+                if ($fieldName === 'last_name') {
+                    return 'self::fake()->lastName()';
+                }
+
+                if ($fieldName === 'title') {
+                    return 'self::fake()->sentence(3)';
+                }
+
+                if ($fieldName === 'text' || $fieldName === 'caption' || $fieldName === 'description' || $fieldName === 'query') {
+                    return 'self::fake()->sentence()';
+                }
+
+                if ($fieldName === 'url' || str_ends_with($fieldName, '_url')) {
+                    return 'self::fake()->url()';
+                }
+
+                if ($fieldName === 'language' || $fieldName === 'language_code') {
+                    return 'self::fake()->languageCode()';
+                }
+
+                if ($fieldName === 'phone_number') {
+                    return 'self::fake()->phoneNumber()';
+                }
+
+                if ($fieldName === 'email') {
+                    return 'self::fake()->email()';
+                }
+
+                if (str_ends_with($fieldName, '_hash') || $fieldName === 'file_unique_id') {
+                    return 'self::fake()->sha1()';
+                }
+
+                if ($fieldName === 'file_id') {
+                    return 'self::fake()->uuid()'; // File IDs are usually long strings
+                }
+
+                if ($fieldName === 'parse_mode') {
+                    return "self::fake()->randomElement(['MarkdownV2', 'HTML', 'Markdown'])";
+                }
+
+                return 'self::fake()->text(50)'; // Default string
+
+            case 'bool':
+            case 'Boolean':
+            case 'True': // Schema sometimes uses True
+                // Use default from schema if 'True'? Already handled by Field parser
+                return 'self::fake()->boolean()';
+
+            case 'float':
+            case 'Float':
+                if ($fieldName === 'latitude') {
+                    return 'self::fake()->latitude()';
+                }
+
+                if ($fieldName === 'longitude') {
+                    return 'self::fake()->longitude()';
+                }
+
+                return 'self::fake()->randomFloat()';
+
+            default: // Should not happen for built-ins
+                return "'[UNKNOWN BUILTIN: {$baseType}]'";
+        }
     }
 }

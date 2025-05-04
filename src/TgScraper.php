@@ -103,8 +103,19 @@ class TgScraper
         }
 
         $typesDir = $directory . '/Types';
+        $interfacesDir = $typesDir . '/Interfaces';
+        $factoriesDir = $directory . '/Factories';
+
         if (!file_exists($typesDir)) {
-            mkdir($typesDir, 0755);
+            mkdir($typesDir, 0755, true);
+        }
+
+        if (!file_exists($interfacesDir)) {
+            mkdir($interfacesDir, 0755, true);
+        }
+
+        if (!file_exists($factoriesDir)) {
+            mkdir($factoriesDir, 0755, true);
         }
 
         try {
@@ -132,9 +143,11 @@ class TgScraper
         file_put_contents($filename, $defaultTypeInterface);
 
         foreach ($types as $className => ['class' => $type, 'interface' => $typeInterface]) {
-            $this->logger->info('Generating class for Type: ' . $className);
-            $filename = sprintf('%s/Types/%s.php', $directory, $className);
-            file_put_contents($filename, $type);
+            if ($type !== null) {
+                $this->logger->info('Generating class for Type: ' . $className);
+                $filename = sprintf('%s/Types/%s.php', $directory, $className);
+                file_put_contents($filename, $type);
+            }
 
             $this->logger->info('Generating interface for Type: ' . $className);
             $filename = sprintf('%s/Types/Interfaces/%sInterface.php', $directory, $className);
@@ -147,6 +160,19 @@ class TgScraper
 
             file_put_contents($filename, $file);
         }
+
+        // --- Generate and Save Test Factories ---
+        $this->logger->info('Generating test factories...');
+        $testFactories = $creator->generateTestFactories();
+
+        foreach ($testFactories as $factoryName => $factoryFile) {
+            $this->logger->info('  Saving test factory: ' . $factoryName);
+            $filename = $factoriesDir . '/' . $factoryName . '.php';
+
+            file_put_contents($filename, $factoryFile);
+        }
+
+        $this->logger->info('Stub and factory generation complete.');
     }
 
     /**
