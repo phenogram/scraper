@@ -1147,7 +1147,7 @@ class StubCreator
         $denormalizeMethod->setReturnType('mixed');
         $denormalizeMethod->setPublic();
         $denormalizeMethod->setBody(<<<'BODY'
-            if (!interface_exists($type) || !is_subclass_of($type, TypeInterface::class)) {
+            if (!interface_exists($type) && !is_subclass_of($type, TypeInterface::class)) {
                 throw new \UnexpectedValueException(sprintf('Failed to decode response to the expected type: %s', $type));
             }
             
@@ -1263,6 +1263,7 @@ class StubCreator
         $abstractFactoryFile = new PhpFile();
         $abstractFactoryNamespace = $abstractFactoryFile->addNamespace($factoryNamespaceStr);
         $abstractFactoryNamespace->addUse('\Faker\Generator');
+        $abstractFactoryNamespace->addUse($this->namespace . '\\Factory');
 
         $abstractFactoryClass = $abstractFactoryNamespace->addClass('AbstractFactory')
             ->setAbstract();
@@ -1301,7 +1302,7 @@ class StubCreator
         $factoryMethod->addBody(
             <<<'PHP'
             if (!isset(static::$factory)) {
-                static::$factory = new \Phenogram\Bindings\Factory();
+                static::$factory = new Factory();
             }
             return static::$factory;
             PHP

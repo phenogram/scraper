@@ -37,7 +37,13 @@ class CreateStubsCommand extends Command
                 'yaml',
                 null,
                 InputOption::VALUE_REQUIRED,
-                'Path to YAML file to use instead of fetching from URL (this option takes precedence over "--layer" and "--json")'
+                'Path to YAML file to use instead of fetching from URL (this option takes precedence over "--layer", "--json", and "--url")'
+            )
+            ->addOption(
+                'url',
+                null,
+                InputOption::VALUE_REQUIRED,
+                'URL to fetch schema from (this option takes precedence over "--layer")'
             )
             ->addOption('layer', 'l', InputOption::VALUE_REQUIRED, 'Bot API version to use', 'latest')
             ->addOption(
@@ -60,12 +66,23 @@ class CreateStubsCommand extends Command
         if (empty($yamlPath)) {
             $jsonPath = $input->getOption('json');
             if (empty($jsonPath)) {
-                $logger->info('Using version: ' . $version);
-                try {
-                    $output->writeln('Fetching data for version...');
-                    $generator = TgScraper::fromVersion($logger, $version);
-                } catch (\Throwable) {
-                    return Command::FAILURE;
+                $url = $input->getOption('url');
+                if (empty($url)) {
+                    $logger->info('Using version: ' . $version);
+                    try {
+                        $output->writeln('Fetching data for version...');
+                        $generator = TgScraper::fromVersion($logger, $version);
+                    } catch (\Throwable) {
+                        return Command::FAILURE;
+                    }
+                } else {
+                    $logger->info('Using URL: ' . $url);
+                    try {
+                        $output->writeln('Fetching data from URL...');
+                        $generator = TgScraper::fromUrl($logger, $url);
+                    } catch (\Throwable) {
+                        return Command::FAILURE;
+                    }
                 }
             } else {
                 $data = file_get_contents($jsonPath);

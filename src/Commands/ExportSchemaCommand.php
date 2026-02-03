@@ -57,25 +57,45 @@ class ExportSchemaCommand extends Command
                 null,
                 InputOption::VALUE_NONE,
                 'Prefer latest stable version (takes precedence over "--layer")'
+            )
+            ->addOption(
+                'url',
+                null,
+                InputOption::VALUE_REQUIRED,
+                'Custom URL to scrape schema from (takes precedence over version options)'
             );
     }
 
     protected function execute(InputInterface $input, OutputInterface $output): int
     {
         $logger = new ConsoleLogger($output);
-        $version = Versions::getVersionFromText($input->getOption('layer'));
-        if ($input->getOption('prefer-stable')) {
-            $version = Versions::STABLE;
-        }
+        
+        $url = $input->getOption('url');
+        if ($url) {
+            $logger->info('Using URL: ' . $url);
+            try {
+                $output->writeln('Fetching data from URL...');
+                $generator = TgScraper::fromUrl($logger, $url);
+            } catch (\Throwable $e) {
+                $logger->critical((string) $e);
 
-        $logger->info('Using version: ' . $version);
-        try {
-            $output->writeln('Fetching data for version...');
-            $generator = TgScraper::fromVersion($logger, $version);
-        } catch (\Throwable $e) {
-            $logger->critical((string) $e);
+                return Command::FAILURE;
+            }
+        } else {
+            $version = Versions::getVersionFromText($input->getOption('layer'));
+            if ($input->getOption('prefer-stable')) {
+                $version = Versions::STABLE;
+            }
 
-            return Command::FAILURE;
+            $logger->info('Using version: ' . $version);
+            try {
+                $output->writeln('Fetching data for version...');
+                $generator = TgScraper::fromVersion($logger, $version);
+            } catch (\Throwable $e) {
+                $logger->critical((string) $e);
+
+                return Command::FAILURE;
+            }
         }
 
         $output->writeln('Exporting schema from data...');
