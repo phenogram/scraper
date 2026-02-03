@@ -1106,6 +1106,10 @@ class StubCreator
         $method->addParameter('isArray')->setType(Type::Bool)->setDefaultValue(false);
         $method->setReturnType(Type::Mixed);
 
+        $method = $interface->addMethod('supports')->setPublic();
+        $method->addParameter('type')->setType(Type::String);
+        $method->setReturnType(Type::Bool);
+
         return [$file, $interface];
     }
 
@@ -1144,6 +1148,15 @@ class StubCreator
             BODY
         );
 
+        $supportsMethod = $class->addMethod('supports');
+        $supportsMethod->addParameter('type')->setType(Type::String);
+        $supportsMethod->setReturnType(Type::Bool);
+        $supportsMethod->setPublic();
+        $supportsMethod->setBody(<<<'BODY'
+            return interface_exists($type) && is_subclass_of($type, TypeInterface::class);
+        BODY);
+
+
         $denormalizeMethod = $class->addMethod('denormalize');
         $denormalizeMethod->addParameter('data')->setType(Type::Array);
         $denormalizeMethod->addParameter('type')->setType(Type::String);
@@ -1151,7 +1164,7 @@ class StubCreator
         $denormalizeMethod->setReturnType('mixed');
         $denormalizeMethod->setPublic();
         $denormalizeMethod->setBody(<<<'BODY'
-            if (!interface_exists($type) && !is_subclass_of($type, TypeInterface::class)) {
+            if (!$this->supports($type)) {
                 throw new \UnexpectedValueException(sprintf('Failed to decode response to the expected type: %s', $type));
             }
             
