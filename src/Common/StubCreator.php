@@ -8,6 +8,7 @@ namespace TgScraper\Common;
 
 use Illuminate\Support\Str;
 use Nette\PhpGenerator\ClassType;
+use Nette\PhpGenerator\Constant;
 use Nette\PhpGenerator\Helpers;
 use Nette\PhpGenerator\InterfaceType;
 use Nette\PhpGenerator\Literal;
@@ -19,6 +20,9 @@ use Nette\PhpGenerator\PromotedParameter;
 use Nette\PhpGenerator\Property;
 use Nette\PhpGenerator\Type;
 use Nette\Utils\Validators;
+use Phenogram\Bindings\Factory;
+use Phenogram\Bindings\FactoryInterface;
+use Phenogram\Bindings\Types\Interfaces\TypeInterface;
 use TgScraper\Common\AbstractClassResolvers\AbstractClassResolverInterface;
 use TgScraper\Common\RedefinedTypes\RedefinedTypeInterface;
 use TgScraper\TgScraper;
@@ -1167,6 +1171,7 @@ class StubCreator
         $denormalizeTypeMethod->addBody('
         return match ($type) {');
 
+        $knownInterfaces = [];
         foreach ($denormalizers as $type => $denormalizer) {
             if (in_array($type, $this->abstractClasses)) {
                 // TODO:
@@ -1177,13 +1182,39 @@ class StubCreator
                 "{$type}Interface::class => \$this->denormalize{$type}(\$data),"
             );
 
-            $phpNamespace->addUse("$this->namespace\\Types\\Interfaces\\{$type}Interface");
+            $knownInterfaces[] = $interface = "$this->namespace\\Types\\Interfaces\\{$type}Interface";
+            $phpNamespace->addUse($interface);
         }
 
         $denormalizeTypeMethod->addBody(
-            '        default => throw new \InvalidArgumentException(sprintf(\'Unknown type %s\', $type)),
+            '        default => $this->resolveAndDenormalizeSubclass($data, $type),
     };
 ');
+
+        $knownInterfacesConstant = new Constant('KNOWN_INTERFACES')
+            ->setValue(array_map(fn (string $type) => new Literal("\\{$type}::class"), $knownInterfaces))
+            ->setPrivate()
+            ->setType('array');
+
+        $class->setConstants([$knownInterfacesConstant]);
+
+        $resolveAndDenormalizeSubclassMethod = $class->addMethod('resolveAndDenormalizeSubclass');
+        $resolveAndDenormalizeSubclassMethod->addParameter('data')->setType(Type::Array);
+        $resolveAndDenormalizeSubclassMethod->addParameter('originalType')->setType(Type::String);
+        $resolveAndDenormalizeSubclassMethod->setReturnType($this->namespace . '\\Types\\Interfaces\\TypeInterface');
+        $resolveAndDenormalizeSubclassMethod->setPrivate();
+        $resolveAndDenormalizeSubclassMethod->setBody(<<<'PHP'
+            foreach (self::KNOWN_INTERFACES as $interface) {
+                if (is_subclass_of($originalType, $interface)) {
+                    $this->customTypesMapping[$originalType] = $interface;
+
+                    return $this->denormalizeType($data, $interface);
+                }
+            }
+
+            throw new \InvalidArgumentException(sprintf('Unknown type %s', $originalType));
+        PHP);
+
 
         $class->setMethods(
             array_merge(
@@ -1234,6 +1265,18 @@ class StubCreator
             ->setType($this->namespace . '\\FactoryInterface')
             ->setDefaultValue(new Literal('new Factory'))
             ->setReadOnly()
+            ->setPrivate();
+
+        $constructor->addPromotedParameter('customTypesMapping')
+            ->setType('array')
+            ->setDefaultValue([])
+            ->addComment(<<<TEXT
+
+            Runtime cache to map concrete classes to their interfaces.
+            Example: [MyCustomUpdate::class => UpdateInterface::class]
+            
+            @var array<class-string, class-string<TypeInterface>>
+            TEXT)
             ->setPrivate();
 
         $class->setMethods(
