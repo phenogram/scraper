@@ -634,10 +634,7 @@ class StubCreator
                     @param class-string<T>|'bool'|'string'|'int'  $returnType
                     @param bool                                   $returnsArray
                     
-                    @return ($returnType is 'bool' ? ($returnsArray is true ? array<bool> : bool)
-                          : ($returnType is 'int' ? ($returnsArray is true ? array<int> : int)
-                          : ($returnType is 'string' ? ($returnsArray is true ? array<string> : string)
-                          : ($returnsArray is true ? array<T> : T))))
+                    @return ($returnsArray is true ? array<T> : T)|bool|string|int
                     COMMENT
             );
 
@@ -1340,10 +1337,10 @@ class StubCreator
 
         $fakeMethod->addBody(
             <<<'PHP'
-            if (!isset(static::$faker)) {
-                static::$faker = \Faker\Factory::create();
+            if (!isset(self::$faker)) {
+                self::$faker = \Faker\Factory::create();
             }
-            return static::$faker;
+            return self::$faker;
             PHP
         );
 
@@ -1361,10 +1358,10 @@ class StubCreator
 
         $factoryMethod->addBody(
             <<<'PHP'
-            if (!isset(static::$factory)) {
-                static::$factory = new Factory();
+            if (!isset(self::$factory)) {
+                self::$factory = new Factory();
             }
-            return static::$factory;
+            return self::$factory;
             PHP
         );
 
@@ -1378,11 +1375,11 @@ class StubCreator
 
         $setFactoryMethod->addBody(
             <<<'PHP'
-            if (isset(static::$factory)) {
+            if (isset(self::$factory)) {
                 throw new \RuntimeException('Factory already set');
             }
             
-            static::$factory = $factory;
+            self::$factory = $factory;
             PHP
         );
 
