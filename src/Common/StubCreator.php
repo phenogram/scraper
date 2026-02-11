@@ -21,7 +21,6 @@ use Nette\PhpGenerator\Property;
 use Nette\PhpGenerator\Type;
 use Nette\Utils\Validators;
 use Phenogram\Bindings\Factory;
-use Phenogram\Bindings\FactoryInterface;
 use Phenogram\Bindings\Types\Interfaces\TypeInterface;
 use TgScraper\Common\AbstractClassResolvers\AbstractClassResolverInterface;
 use TgScraper\Common\RedefinedTypes\RedefinedTypeInterface;
@@ -628,10 +627,17 @@ class StubCreator
         $doRequestMethod
             ->addComment(
                 <<<'COMMENT'
-                    @param array<mixed>              $args
-                    @param class-string|'bool'|'string'|'int' $returnType
-
-                    @phpstan-ignore-next-line TODO: add generics to the promise from $returnType
+                    @template T of object
+                    
+                    @param string                                 $method
+                    @param array<mixed>                           $args
+                    @param class-string<T>|'bool'|'string'|'int'  $returnType
+                    @param bool                                   $returnsArray
+                    
+                    @return ($returnType is 'bool' ? ($returnsArray is true ? array<bool> : bool)
+                          : ($returnType is 'int' ? ($returnsArray is true ? array<int> : int)
+                          : ($returnType is 'string' ? ($returnsArray is true ? array<string> : string)
+                          : ($returnsArray is true ? array<T> : T))))
                     COMMENT
             );
 
@@ -1156,7 +1162,6 @@ class StubCreator
             return interface_exists($type) && is_subclass_of($type, TypeInterface::class);
         BODY);
 
-
         $denormalizeMethod = $class->addMethod('denormalize');
         $denormalizeMethod->addParameter('data')->setType(Type::Array);
         $denormalizeMethod->addParameter('type')->setType(Type::String);
@@ -1227,7 +1232,6 @@ class StubCreator
 
             throw new \InvalidArgumentException(sprintf('Unknown type %s', $originalType));
         PHP);
-
 
         $class->setMethods(
             array_merge(

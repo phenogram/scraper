@@ -69,7 +69,7 @@ class ExportSchemaCommand extends Command
     protected function execute(InputInterface $input, OutputInterface $output): int
     {
         $logger = new ConsoleLogger($output);
-        
+
         $url = $input->getOption('url');
         if ($url) {
             $logger->info('Using URL: ' . $url);
