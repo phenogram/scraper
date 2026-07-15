@@ -301,8 +301,8 @@ class StubCreator
         $okProperty = $responseInterface->addProperty('ok')
             ->setType(Type::Bool)
             ->setPublic();
-        $okProperty->addGetHook('');
-        $okProperty->addSetHook('');
+        $okProperty->addHook('get');
+        $okProperty->addHook('set');
 
         $constructor->addPromotedParameter('result')
             ->setPublic()
@@ -315,8 +315,8 @@ class StubCreator
             ->setType(Type::Mixed)
             ->setNullable()
             ->setPublic();
-        $resultProperty->addGetHook('');
-        $resultProperty->addSetHook('');
+        $resultProperty->addHook('get');
+        $resultProperty->addHook('set');
 
         $constructor->addPromotedParameter('errorCode')
             ->setPublic()
@@ -328,8 +328,8 @@ class StubCreator
             ->setType(Type::Int)
             ->setNullable()
             ->setPublic();
-        $errorCodeProperty->addGetHook('');
-        $errorCodeProperty->addSetHook('');
+        $errorCodeProperty->addHook('get');
+        $errorCodeProperty->addHook('set');
 
         $constructor->addPromotedParameter('description')
             ->setPublic()
@@ -341,8 +341,8 @@ class StubCreator
             ->setType(Type::String)
             ->setNullable()
             ->setPublic();
-        $descriptionProperty->addGetHook('');
-        $descriptionProperty->addSetHook('');
+        $descriptionProperty->addHook('get');
+        $descriptionProperty->addHook('set');
 
         $constructor->addPromotedParameter('parameters')
             ->setPublic()
@@ -354,8 +354,8 @@ class StubCreator
             ->setType($interfacesNamespace . '\\ResponseParametersInterface')
             ->setNullable()
             ->setPublic();
-        $parametersProperty->addGetHook('');
-        $parametersProperty->addSetHook('');
+        $parametersProperty->addHook('get');
+        $parametersProperty->addHook('set');
 
         $response->addImplement($interfacesNamespace . '\\ResponseInterface');
 
@@ -459,15 +459,14 @@ class StubCreator
                 $fieldName = self::toCamelCase($field['name']);
                 $param = new PromotedParameter($fieldName)->setType($fieldType);
                 $property = new Property($fieldName)->setType($fieldType)->setPublic();
-                $property->addGetHook('');
-                $property->addSetHook('');
+                $property->addHook('get');
+                $property->addHook('set');
 
                 if ($field['optional']) {
                     $param->setNullable();
                     $param->setDefaultValue(null);
 
                     $property->setNullable();
-                    $property->setValue(null);
 
                     if ($fieldComment !== '') {
                         $fieldComment .= '|null';
@@ -475,7 +474,6 @@ class StubCreator
                 } else {
                     if (isset($field['default'])) {
                         $param->setDefaultValue($field['default']);
-                        $property->setValue($field['default']);
                     }
                 }
 
@@ -1593,33 +1591,33 @@ class StubCreator
 
                 // Generate 0 to 3 items
                 return "array_map(fn() => {$factoryCall}, range(0, self::fake()->numberBetween(0, 2)))";
-            } else {
-                // Array of built-in types or InputFile
-                switch ($innerBaseType) {
-                    case 'int':
-                        return 'self::fake()->randomElements(range(1, 100), self::fake()->numberBetween(1, 5))';
-                    case 'string':
-                        // Check field name for hints
-                        if (str_contains($fieldName, 'emoji')) {
-                            return 'self::fake()->randomElements(["👍", "❤️", "😂", "🚀"], self::fake()->numberBetween(1, 3))';
-                        }
+            }
 
-                        if (str_contains($fieldName, 'entities')) { // Special case for Message entities
-                            return '[]'; // Default to empty array, too complex to fake well automatically
-                        }
+            // Array of built-in types or InputFile
+            switch ($innerBaseType) {
+                case 'int':
+                    return 'self::fake()->randomElements(range(1, 100), self::fake()->numberBetween(1, 5))';
+                case 'string':
+                    // Check field name for hints
+                    if (str_contains($fieldName, 'emoji')) {
+                        return 'self::fake()->randomElements(["👍", "❤️", "😂", "🚀"], self::fake()->numberBetween(1, 3))';
+                    }
 
-                        if (str_contains($fieldName, 'photo')) { // e.g. photo sizes
-                            return '[]'; // Default to empty array
-                        }
+                    if (str_contains($fieldName, 'entities')) { // Special case for Message entities
+                        return '[]'; // Default to empty array, too complex to fake well automatically
+                    }
 
-                        return 'self::fake()->words(self::fake()->numberBetween(1, 5))';
-                    case 'bool':
-                        return '[self::fake()->boolean(), self::fake()->boolean()]';
-                    case 'float':
-                        return '[self::fake()->randomFloat(2), self::fake()->randomFloat(2)]';
-                    default: // InputFile, mixed, etc.
-                        return '[]'; // Sensible default for arrays of complex/unknown types
-                }
+                    if (str_contains($fieldName, 'photo')) { // e.g. photo sizes
+                        return '[]'; // Default to empty array
+                    }
+
+                    return 'self::fake()->words(self::fake()->numberBetween(1, 5))';
+                case 'bool':
+                    return '[self::fake()->boolean(), self::fake()->boolean()]';
+                case 'float':
+                    return '[self::fake()->randomFloat(2), self::fake()->randomFloat(2)]';
+                default: // InputFile, mixed, etc.
+                    return '[]'; // Sensible default for arrays of complex/unknown types
             }
         }
 

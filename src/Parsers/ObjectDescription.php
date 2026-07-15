@@ -50,7 +50,7 @@ class ObjectDescription
                     continue;
                 }
 
-                $type = str_replace(['True', 'Int', 'String'], ['bool', 'int', 'string'], $element->text());
+                $type = Field::TYPES[$element->text()] ?? $element->text();
                 $returnTypes[] = $type;
             }
         }

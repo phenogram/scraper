@@ -14,6 +14,7 @@ class Field
      */
     public const TYPES = [
         'Integer' => 'int',
+        'Int' => 'int',
         'Float' => 'float',
         'String' => 'string',
         'Boolean' => 'bool',
@@ -53,7 +54,7 @@ class Field
 
         $type = trim(str_replace('number', '', $type));
 
-        return trim(str_replace(array_keys(self::TYPES), array_values(self::TYPES), $type));
+        return self::TYPES[$type] ?? $type;
     }
 
     private function parseTypesString(string $text): array
