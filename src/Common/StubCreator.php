@@ -1186,8 +1186,10 @@ class StubCreator
 
         $knownInterfaces = [];
         foreach ($denormalizers as $type => $denormalizer) {
-            if (in_array($type, $this->abstractClasses)) {
-                // TODO:
+            if (
+                in_array($type, $this->abstractClasses, true)
+                && !isset($this->abstractClassResolvers[$type])
+            ) {
                 continue;
             }
 
