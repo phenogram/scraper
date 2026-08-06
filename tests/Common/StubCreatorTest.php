@@ -66,5 +66,9 @@ final class StubCreatorTest extends TestCase
             'ChatMemberInterface::class => $this->denormalizeChatMember($data)',
             $serializer,
         );
+        self::assertStringContainsString(
+            'return in_array($type, self::KNOWN_INTERFACES, true);',
+            $serializer,
+        );
     }
 }

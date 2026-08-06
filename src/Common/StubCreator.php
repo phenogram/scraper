@@ -1154,7 +1154,7 @@ class StubCreator
         $supportsMethod->setReturnType(Type::Bool);
         $supportsMethod->setPublic();
         $supportsMethod->setBody(<<<'BODY'
-            return interface_exists($type) && is_subclass_of($type, TypeInterface::class);
+            return in_array($type, self::KNOWN_INTERFACES, true);
         BODY);
 
         $denormalizeMethod = $class->addMethod('denormalize');
