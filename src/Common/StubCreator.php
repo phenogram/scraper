@@ -135,6 +135,15 @@ class StubCreator
         $arrayType = null;
 
         foreach ($fieldTypes as $fieldType) {
+            if ($fieldType === 'RichText') {
+                $interface = $phpNamespace->getName() . '\\Interfaces\\RichTextInterface';
+                $phpNamespace->addUse($interface);
+                array_push($types, $interface, 'string', 'array');
+                $comments[] = 'RichTextInterface|string|array<mixed>';
+
+                continue;
+            }
+
             if (str_starts_with($fieldType, 'Array')) {
                 $fieldType = str_replace('Array', 'array', $fieldType);
                 $types[] = 'array';
@@ -197,6 +206,16 @@ class StubCreator
         $comments = [];
 
         foreach ($apiTypes as $apiType) {
+            if ($apiType === 'RichText') {
+                $interface = "$this->namespace\\Types\\Interfaces\\RichTextInterface";
+                $phpNamespace->addUse($interface);
+                $interfaceNamespace->addUse($interface);
+                array_push($types, $interface, 'string', 'array');
+                $comments[] = 'RichTextInterface|string|array<mixed>';
+
+                continue;
+            }
+
             if (str_starts_with($apiType, 'Array')) {
                 $types[] = 'array';
 
@@ -883,6 +902,19 @@ class StubCreator
             ->addParameter('data')
             ->setType(Type::Array);
 
+        if ($this->isRichType($type)) {
+            if ($type === 'RichText') {
+                $denormalizeTypeMethod->getParameter('data')->setType('string|array');
+                $denormalizeTypeMethod->setReturnType(
+                    $this->namespace . '\\Types\\Interfaces\\RichTextInterface|string|array'
+                );
+            }
+
+            $denormalizeTypeMethod->setBody($this->generateRichTypeResolver($type));
+
+            return $denormalizeTypeMethod;
+        }
+
         if (in_array($type, $this->abstractClasses)) {
             if (!isset($this->abstractClassResolvers[$type])) {
                 $denormalizeTypeMethod->addBody(
@@ -972,6 +1004,28 @@ class StubCreator
             $value = sprintf('$data[\'%s\']', $snakeParamName);
 
             $paramType = (string) $param->getType();
+            if ($type === 'InputRichMessageMedia' && $snakeParamName === 'media') {
+                $schemaTypes = array_column($this->schema['types'], null, 'name');
+                $fields = array_column($schemaTypes[$type]['fields'], null, 'name');
+                $denormalizeTypeMethod->addBody(sprintf(
+                    '    %s: %s,',
+                    $param->getName(),
+                    $this->generateDiscriminatorMatch($fields['media']['types'], $value, 'InputRichMessageMedia media')
+                ));
+
+                continue;
+            }
+
+            if (in_array($this->namespace . '\\Types\\Interfaces\\RichTextInterface', explode('|', $paramType), true)) {
+                $decoded = '$this->denormalizeRichText(' . $value . ')';
+                if ($param->hasDefaultValue()) {
+                    $decoded = 'isset(' . $value . ') ? ' . $decoded . ' : null';
+                }
+                $denormalizeTypeMethod->addBody(sprintf('    %s: %s,', $param->getName(), $decoded));
+
+                continue;
+            }
+
             $paramTypeBase = explode('\\', $paramType);
             $paramTypeBase = $paramTypeBase[count($paramTypeBase) - 1];
             $paramTypeBase = explode('|', $paramTypeBase);
@@ -1065,6 +1119,56 @@ class StubCreator
         return $denormalizeTypeMethod;
     }
 
+    private function isRichType(string $type): bool
+    {
+        return in_array($type, ['RichText', 'RichBlock', 'InputRichBlock'], true);
+    }
+
+    private function generateRichTypeResolver(string $type): string
+    {
+        $body = '';
+        if ($type === 'RichText') {
+            $body = <<<'PHP'
+                if (is_string($data)) {
+                    return $data;
+                }
+
+                if (array_is_list($data)) {
+                    return array_map(fn (string|array $item) => $this->denormalizeRichText($item), $data);
+                }
+
+                PHP;
+        }
+
+        return $body . 'return ' . $this->generateDiscriminatorMatch($this->extendedBy[$type], '$data', $type) . ';';
+    }
+
+    private function generateDiscriminatorMatch(array $types, string $value, string $label): string
+    {
+        $body = "match ({$value}['type'] ?? null) {\n";
+        foreach ($types as $type) {
+            $body .= sprintf("    %s => \$this->denormalize%s(%s),\n", var_export($this->getTypeDiscriminator($type), true), $type, $value);
+        }
+        $body .= sprintf("    default => throw new \\InvalidArgumentException('Unknown %s type'),\n}", $label);
+
+        return $body;
+    }
+
+    private function getTypeDiscriminator(string $type): string
+    {
+        $types = array_column($this->schema['types'], null, 'name');
+        $fields = array_column($types[$type]['fields'], null, 'name');
+        if (isset($fields['type']['default']) && is_string($fields['type']['default'])) {
+            return $fields['type']['default'];
+        }
+        $description = $fields['type']['description'] ?? '';
+        if (!preg_match('/always [“"\']([^”"\']+)[”"\']/u', $description, $match)) {
+            throw new \InvalidArgumentException('Missing type discriminator for ' . $type);
+        }
+
+        return $match[1];
+    }
+
     /**
      * @return array{0: PhpFile, 1: InterfaceType}
      */
@@ -1149,6 +1253,17 @@ class StubCreator
             BODY
         );
 
+        if (isset($denormalizers['RichText'])) {
+            $deserializeMethod->setBody(<<<'BODY'
+                if ($type === Types\Interfaces\RichTextInterface::class) {
+                    return $isArray
+                        ? array_map(fn (string|array $item) => $this->denormalizeRichText($item), $data)
+                        : $this->denormalizeRichText($data);
+                }
+
+                BODY . $deserializeMethod->getBody());
+        }
+
         $supportsMethod = $class->addMethod('supports');
         $supportsMethod->addParameter('type')->setType(Type::String);
         $supportsMethod->setReturnType(Type::Bool);
@@ -1176,10 +1291,23 @@ class StubCreator
             BODY
         );
 
+        if (isset($denormalizers['RichText'])) {
+            $denormalizeMethod->setBody(<<<'BODY'
+                if ($type === Types\Interfaces\RichTextInterface::class) {
+                    return $isArray
+                        ? array_map(fn (string|array $item) => $this->denormalizeRichText($item), $data)
+                        : $this->denormalizeRichText($data);
+                }
+
+                BODY . $denormalizeMethod->getBody());
+        }
+
         $denormalizeTypeMethod = $class->addMethod('denormalizeType');
         $denormalizeTypeMethod->addParameter('data')->setType(Type::Array);
         $denormalizeTypeMethod->addParameter('type')->setType(Type::String);
-        $denormalizeTypeMethod->setReturnType($this->namespace . '\\Types\\Interfaces\\TypeInterface');
+        $denormalizeTypeMethod->setReturnType(
+            $this->namespace . '\\Types\\Interfaces\\TypeInterface' . (isset($denormalizers['RichText']) ? '|string|array' : '')
+        );
         $denormalizeTypeMethod->setPrivate();
         $denormalizeTypeMethod->addBody('
         return match ($type) {');
@@ -1189,6 +1317,7 @@ class StubCreator
             if (
                 in_array($type, $this->abstractClasses, true)
                 && !isset($this->abstractClassResolvers[$type])
+                && !$this->isRichType($type)
             ) {
                 continue;
             }
@@ -1463,6 +1592,14 @@ class StubCreator
                 foreach ($field['types'] as $fieldTypeStr) {
                     [$baseType, $isArray] = $this->getBaseTypeAndArrayInfo($fieldTypeStr);
 
+                    if ($baseType === 'RichText' && !$isArray) {
+                        array_push($paramTypes, '\\' . $interfacesNamespaceStr . '\\RichTextInterface', 'string', 'array');
+                        $hasObject = true;
+                        $hasBuiltin = true;
+
+                        continue;
+                    }
+
                     if ($isArray) {
                         $paramTypes[] = 'array';
                         $hasBuiltin = true; // Treat array as built-in for simplicity here
@@ -1575,6 +1712,14 @@ class StubCreator
         // Prioritize the first type for simplicity, but consider others for hints
         $mainTypeStr = $types[0];
         [$baseType, $isArray, $arrayLevel] = $this->getBaseTypeAndArrayInfo($mainTypeStr);
+
+        if ($baseType === 'RichText' && !$isArray) {
+            return 'self::fake()->sentence()';
+        }
+
+        if ($fieldName === 'type' && $this->isRichType($this->extendedClasses[$containingTypeName] ?? '')) {
+            return var_export($this->getTypeDiscriminator($containingTypeName), true);
+        }
 
         // Handle simple array case first
         if ($isArray) {
