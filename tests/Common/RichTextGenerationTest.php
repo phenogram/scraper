@@ -60,6 +60,22 @@ final class RichTextGenerationTest extends TestCase
         $serializer->deserialize(['id' => 'attachment', 'media' => ['type' => 'sticker', 'media' => 'file-id']], $interface);
     }
 
+    public function testArraysOfRichTextAcceptStringsListsAndEntities(): void
+    {
+        $serializer = $this->createSerializer();
+        $texts = ['plain', ['part ', ['type' => 'bold', 'text' => 'bold']], ['type' => 'bold', 'text' => ['nested']]];
+        foreach (['TextQuote' => 'rich_texts', 'ReplyParameters' => 'quote_rich_texts'] as $type => $field) {
+            $interface = self::GENERATED_NAMESPACE . '\\Types\\Interfaces\\' . $type . 'Interface';
+            $input = [$field => $texts];
+            $decoded = $serializer->deserialize($input, $interface);
+            self::assertSame(['value' => $input], $serializer->serialize(['value' => $decoded]));
+            self::assertSame([], $serializer->serialize(get_object_vars($serializer->deserialize([], $interface))));
+        }
+
+        $property = new \ReflectionProperty(self::GENERATED_NAMESPACE . '\\Types\\Interfaces\\TextQuoteInterface', 'richTexts');
+        self::assertStringContainsString('array<RichTextInterface|string|array<mixed>>|null', $property->getDocComment());
+    }
+
     private function createSerializer(): object
     {
         $class = self::GENERATED_NAMESPACE . '\\Serializer';
@@ -86,6 +102,8 @@ final class RichTextGenerationTest extends TestCase
                     $type('RichBlockButtons', [$field('type', 'string', 'Type, always “buttons”'), $field('buttons', 'Array<RichMessageButton>')]),
                     $type('InputRichBlock', children: ['InputRichBlockButtons']),
                     $type('InputRichBlockButtons', [$field('type', 'string', 'Type, always “buttons”'), $field('buttons', 'Array<RichMessageButton>')]),
+                    $type('TextQuote', [array_replace($field('rich_texts', 'Array<RichText>'), ['optional' => true])]),
+                    $type('ReplyParameters', [array_replace($field('quote_rich_texts', 'Array<RichText>'), ['optional' => true])]),
                 ],
                 'methods' => [],
             ];

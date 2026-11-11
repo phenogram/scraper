@@ -163,7 +163,11 @@ class StubCreator
                 $commentType = $fieldType;
 
                 if (ucfirst($innerType) == $innerType) {
-                    $commentType = str_replace($innerType, $innerType . 'Interface', $fieldType);
+                    $commentType = str_replace(
+                        $innerType,
+                        $innerType . ($innerType === 'RichText' ? 'Interface|string|array<mixed>' : 'Interface'),
+                        $fieldType
+                    );
 
                     $innerType = $phpNamespace->getName() . '\\Interfaces\\' . $innerType . 'Interface';
 
@@ -230,7 +234,11 @@ class StubCreator
                 $subTypes = explode('|', $text);
                 foreach ($subTypes as $subType) {
                     if (ucfirst($subType) == $subType) {
-                        $comment = str_replace($subType, $subType . 'Interface', $comment);
+                        $comment = str_replace(
+                            $subType,
+                            $subType . ($subType === 'RichText' ? 'Interface|string|array<mixed>' : 'Interface'),
+                            $comment
+                        );
 
                         $subType = "$this->namespace\\Types\\Interfaces\\{$subType}Interface";
                         $phpNamespace->addUse($subType);
@@ -902,7 +910,7 @@ class StubCreator
             ->addParameter('data')
             ->setType(Type::Array);
 
-        if ($this->isRichType($type)) {
+        if ($this->hasSchemaDiscriminator($type)) {
             if ($type === 'RichText') {
                 $denormalizeTypeMethod->getParameter('data')->setType('string|array');
                 $denormalizeTypeMethod->setReturnType(
@@ -910,7 +918,7 @@ class StubCreator
                 );
             }
 
-            $denormalizeTypeMethod->setBody($this->generateRichTypeResolver($type));
+            $denormalizeTypeMethod->setBody($this->generateSchemaTypeResolver($type));
 
             return $denormalizeTypeMethod;
         }
@@ -1037,6 +1045,7 @@ class StubCreator
             if ($handlingArray) {
                 [$arrayLevel, $paramTypeBase] = $arrayTypes[$snakeParamName];
             }
+            $elementType = $paramTypeBase === 'RichText' ? 'string|array' : 'array';
 
             if (!Validators::isBuiltinType($paramTypeBase) && $paramTypeBase !== 'InputFile') {
                 if ($defaultValue !== null) {
@@ -1044,7 +1053,7 @@ class StubCreator
                         if ($arrayLevel === 1) {
                             $value = <<<VALUE
                             isset($value)
-                                    ? array_map(fn (array \$item) => \$this->denormalize{$paramTypeBase}(\$item), $value)
+                                    ? array_map(fn ({$elementType} \$item) => \$this->denormalize{$paramTypeBase}(\$item), $value)
                                     : null
                             VALUE;
                         } elseif ($arrayLevel === 2) {
@@ -1052,7 +1061,7 @@ class StubCreator
                             isset($value)
                                     ? array_map(
                                         fn (array \$item0) => array_map(
-                                            fn (array \$item1) => \$this->denormalize{$paramTypeBase}(\$item1),
+                                            fn ({$elementType} \$item1) => \$this->denormalize{$paramTypeBase}(\$item1),
                                             \$item0
                                         ),
                                         $value
@@ -1075,7 +1084,8 @@ class StubCreator
                     if ($handlingArray) {
                         if ($arrayLevel === 1) {
                             $value = sprintf(
-                                'array_map(fn (array $item) => $this->denormalize%s($item), $data[\'%s\'])',
+                                'array_map(fn (%s $item) => $this->denormalize%s($item), $data[\'%s\'])',
+                                $elementType,
                                 $paramTypeBase,
                                 $snakeParamName
                             );
@@ -1084,12 +1094,13 @@ class StubCreator
                                 <<<'BODY'
                                 array_map(
                                         fn (array $item0) => array_map(
-                                            fn (array $item1) => $this->denormalize%s($item1),
+                                            fn (%s $item1) => $this->denormalize%s($item1),
                                             $item0
                                         ),
                                         $data['%s']
                                     )
                                 BODY,
+                                $elementType,
                                 $paramTypeBase,
                                 $snakeParamName
                             );
@@ -1119,12 +1130,12 @@ class StubCreator
         return $denormalizeTypeMethod;
     }
 
-    private function isRichType(string $type): bool
+    private function hasSchemaDiscriminator(string $type): bool
     {
-        return in_array($type, ['RichText', 'RichBlock', 'InputRichBlock'], true);
+        return in_array($type, ['RichText', 'RichBlock', 'InputRichBlock', 'WidgetQueryType', 'ChatShareTheme', 'EmojiType'], true);
     }
 
-    private function generateRichTypeResolver(string $type): string
+    private function generateSchemaTypeResolver(string $type): string
     {
         $body = '';
         if ($type === 'RichText') {
@@ -1317,7 +1328,7 @@ class StubCreator
             if (
                 in_array($type, $this->abstractClasses, true)
                 && !isset($this->abstractClassResolvers[$type])
-                && !$this->isRichType($type)
+                && !$this->hasSchemaDiscriminator($type)
             ) {
                 continue;
             }
@@ -1640,7 +1651,15 @@ class StubCreator
                     ->setNullable($isNullable) // Optional fields are nullable
                     ->setDefaultValue(null);
 
-                $makeMethod->addComment("@param {$paramTypeHint}|null \${$paramName} Optional. " . strip_tags($field['description']));
+                $paramCommentType = $paramTypeHint;
+                [$commentBaseType, $commentIsArray, $commentArrayLevel] = $this->getBaseTypeAndArrayInfo($field['types'][0]);
+                if ($commentIsArray && $commentBaseType === 'RichText') {
+                    $paramCommentType = '\\' . $interfacesNamespaceStr . '\\RichTextInterface|string|array<mixed>';
+                    for ($level = 0; $level < $commentArrayLevel; ++$level) {
+                        $paramCommentType = 'array<' . $paramCommentType . '>';
+                    }
+                }
+                $makeMethod->addComment("@param {$paramCommentType}|null \${$paramName} Optional. " . strip_tags($field['description']));
             }
 
             // Generate make() method body
@@ -1717,8 +1736,27 @@ class StubCreator
             return 'self::fake()->sentence()';
         }
 
-        if ($fieldName === 'type' && $this->isRichType($this->extendedClasses[$containingTypeName] ?? '')) {
+        if ($fieldName === 'type' && $this->hasSchemaDiscriminator($this->extendedClasses[$containingTypeName] ?? '')) {
             return var_export($this->getTypeDiscriminator($containingTypeName), true);
+        }
+
+        $defaultConcreteType = match ($baseType) {
+            'WidgetQueryType' => 'WidgetQueryTypeData',
+            'ChatShareTheme' => 'ChatShareThemeEmoji',
+            'EmojiType' => 'EmojiTypeEmoji',
+            default => null,
+        };
+        if ($defaultConcreteType !== null) {
+            $expression = "\\{$factoryNamespace}\\{$defaultConcreteType}Factory::make()";
+            for ($level = 0; $level < $arrayLevel; ++$level) {
+                $expression = '[' . $expression . ']';
+            }
+
+            return $expression;
+        }
+
+        if ($containingTypeName === 'EmojiTypeEmoji' && $fieldName === 'emoji') {
+            return "'👍'";
         }
 
         // Handle simple array case first
